@@ -7,6 +7,8 @@
 
 unsigned int packedCodeToFourMer[256];
 
+#define pow4(a) (1<<((a)<<1))
+
 void init_LookupTable()
 {
 	// Work with 4-mers for the moment to have small lookup tables
@@ -18,7 +20,7 @@ void init_LookupTable()
 		int remainder = i;
 		int pos = 0;
 		for( slot = merLen-1; slot >= 0; slot-- ) {
-			valInSlot =  (int)  (remainder / pow( 4, slot ) );
+         valInSlot = remainder / pow4(slot);
 			char base;
 			
 			if( valInSlot == 0 ) { base = 'A'; }
@@ -29,7 +31,7 @@ void init_LookupTable()
 			
 			mer[pos] = base;
 			pos++;
-			remainder -= valInSlot * pow( 4, slot );
+         remainder -= valInSlot * pow4(slot);
 		}
 		unsigned int *merAsUInt = (unsigned int*) mer;
 		packedCodeToFourMer[i] = (unsigned int) (*merAsUInt);
@@ -89,7 +91,7 @@ void unpackSequence(const unsigned char *seq_to_unpack, unsigned char *unpacked_
 {
 	/* Result string is pointer unpacked_seq */
 	int i = 0, j = 0;
-	int packed_len = ceil(kmer_len/4.0);
+   int packed_len = (kmer_len+3)/4;
 	for( ; i < packed_len ; i++, j += 4 )
 	{
 		*( ( unsigned int * )( unpacked_seq + j ) ) = packedCodeToFourMer[ seq_to_unpack[i] ];
