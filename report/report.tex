@@ -1,0 +1,153 @@
+\documentclass{article}
+\usepackage{amsmath, amssymb}
+\usepackage[retainorgcmds]{IEEEtrantools}
+\usepackage{filecontents}
+\usepackage{hyperref}
+\usepackage{algpseudocode}
+\author{Derek Kuo, Henry Milner}
+\title{CS267 HW3}
+\date{04/03/15}
+
+% Some functions for general use.
+
+\def\seqn#1\eeqn{\begin{align}#1\end{align}}
+
+\newcommand{\vecName}[1]%
+  {\boldsymbol{#1}}
+
+\newcommand{\io}%
+  {\text{ i.o. }}
+
+\newcommand{\eventually}%
+  {\text{ eventually }}
+
+\newcommand{\tr}%
+  {\text{tr}}
+
+\newcommand{\Cov}%
+  {\text{Cov}}
+
+\newcommand{\adj}%
+  {\text{adj}}
+
+\newcommand{\funcName}[1]%
+  {\text{#1}}
+
+\newcommand{\hasDist}%
+  {\sim}
+
+\DeclareMathOperator*{\E}%
+  {\mathbb{E}}
+
+\newcommand{\Var}%
+  {\text{Var}}
+
+\newcommand{\std}%
+  {\text{std}}
+
+\newcommand{\grad}%
+  {\nabla}
+
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\newcommand{\inprod}[2]%
+  {\langle #1, #2 \rangle}
+
+\newcommand{\dd}[1]%
+  {\frac{\delta}{\delta#1}}
+
+\newcommand{\Reals}%
+  {\mathbb{R}}
+
+\newcommand{\indep}%
+  {\protect\mathpalette{\protect\independenT}{\perp}} \def\independenT#1#2{\mathrel{\rlap{$#1#2$}\mkern2mu{#1#2}}}
+
+\newcommand{\defeq}%
+  {\buildrel\triangle\over =}
+
+\newcommand{\defn}[1]%
+  {\emph{Definition: #1}\\}
+
+\newcommand{\example}[1]%
+  {\emph{Example: #1}\\}
+
+\newcommand{\figref}[1]%
+  {\figurename~\ref{#1}}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newenvironment{proof}[1][Proof]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}]}{\end{trivlist}}
+
+\begin{filecontents}{\jobname.bib}
+%@book{foo
+%}
+\end{filecontents}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+\section{Implementation}
+A parallel implementation is useful only for handling large genomes.  Sequencing many smaller genomes is an embarrassingly parallel problem to which serial code is likely better suited.  So, when there are design choices to be made, we will target the large-scale regime.
+
+\subsection{Graph Creation}
+Graph creation is essentially a distributed hash-based shuffle, like the shuffle stage in a MapReduce job.  This involves all-to-all communication linear in the number of processors.  In large-scale experiments, we expect the major bottleneck to be network communication, so we do not optimize too much for CPU and memory.  This frees us to use two shortcuts:
+\begin{enumerate}
+  \item We use a hash-based shuffle to ensure that each processor has only the kmers that will be inserted into its own slice of the hash table.  Then inserting into the hash table is embarrassingly parallel.  Since UPC does not have a built-in hash-based shuffle (the closest being \texttt{upc\_all\_sort}, which would do $O(n \log n)$ communication), we had to implement it ourselves.  Otherwise, this approach is quite simple, since it requires no locking and only very coarse-grained synchronization.
+  \item We use a simple linked-list-based hash table.  Linear probing would allow us to insert in the table without locks, but potentially requires inter-node communication on each hop.
+\end{enumerate}
+
+
+
+\begin{algorithmic}
+\State numThreads $\gets$ the number of threads
+\State totalSize $\gets$ the number of kmers
+\State kmersTable $\gets$ a shared hash table
+\State hashShuffle()
+\State // Now localKmers is a list of kmers for this thread to handle.
+\For{each thread $i$ and kmer $k$}
+  \State insert $k$ into kmersTable, an entirely local operation.
+\EndFor
+
+\Function{hashShuffle}
+  \State // buckets $i*\texttt{numThreads}$ through $(i+1)*\texttt{numThreads}-1$ are stored in thread $i$'s memory.
+  \State localBuckets $\gets$ new DynamicArray\<PackedKmer\>[numThreads*numThreads]
+  \For{each thread $i$ and each local kmer $k$}
+    \State localBuckets[$i*$numThreads$ + ($hash($k$) $\%$ numThreads$)$].add($k$)
+  \EndFor
+  \For{each thread $i$}
+    \State // The following can be implemented efficient with \texttt{upc_all_scatter}:
+    \State numKmersToReceive $\gets$ new int[numThreads]
+    \For{each thread $j$}
+      \State numKmersToReceive[$j$] $\gets$ localBuckets[$j*$numThreads$+i$].size()
+    \EndFor
+    localKmers = new PackedKmer[numKmersToReceive.sum()]
+    \For{each thread $j$}
+      \State copy localBuckets[$j*$numThreads$+i$] into localKmers
+      \State increment localKmers to point past the copied kmers
+    \EndFor
+  \EndFor
+\EndFunction
+
+\end{algorithmic}
+
+\subsection{Graph Traversal}
+
+
+\section{Results}
+\subsection{Small experiment}
+\subsection{Large experiment}
+
+\section{Discussion}
+\subsection{Using UPC}
+
+\subsection{Implementation on Alternative Frameworks}
+
+%\bibliographystyle{plain}
+%\bibliography{\jobname}
+
+\end{document}

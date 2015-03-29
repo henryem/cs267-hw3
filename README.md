@@ -1,7 +1,7 @@
 # cs267-hw3
 =Installation=
 Note that the project currently builds only on Linux, because I cannot figure out how to build BUPC
-or GUPC on OSX 10.10.
+or GUPC on OSX 10.10.  Instructions below are for Ubuntu 14.04.1
 
 First, download and install Berkeley UPC (BUPC).  You will need to build from source.  Follow
 the instructions here:

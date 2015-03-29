@@ -22,6 +22,13 @@ serial: serial.c $(HEADERS)
 pgen:	pgen.upc $(HEADERS)
 		$(UPCC) $(UPCFLAGS) -Wc,"$(CFLAGS)" -o $@ $< $(DEFINE) $(LIBS)
 
+GRADING_PACKAGE_NAME = derek_henry_hw3.tar.gz
+grading-package: $(GRADING_PACKAGE_NAME)
+$(GRADING_PACKAGE_NAME): *.c *.upc *.h MAKEFILE members.txt report.pdf
+	tar cvzf $(GRADING_PACKAGE_NAME) $^
+report.pdf: ../report/report.pdf
+	cp $< $@
+
 clean :
 	rm -f *.o
 	rm -rf $(TARGETS)
