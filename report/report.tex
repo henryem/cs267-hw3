@@ -113,17 +113,17 @@ Graph creation is essentially a distributed hash-based shuffle, like the shuffle
   \State insert $k$ into kmersTable, an entirely local operation.
 \EndFor
 
-\Function{hashShuffle}
+\Function{hashShuffle}{}
   \State // buckets $i*\texttt{numThreads}$ through $(i+1)*\texttt{numThreads}-1$ are stored in thread $i$'s memory.
-  \State localBuckets $\gets$ new DynamicArray\<PackedKmer\>[numThreads*numThreads]
+  \State localBuckets $\gets$ new DynamicArray<PackedKmer>[numThreads*numThreads]
   \For{each thread $i$ and each local kmer $k$}
-    \State localBuckets[$i*$numThreads$ + ($hash($k$) $\%$ numThreads$)$].add($k$)
+    \State localBuckets[$i*\texttt{numThreads}$ + (hash($k$) $\%$ numThreads)].add($k$)
   \EndFor
   \For{each thread $i$}
-    \State // The following can be implemented efficient with \texttt{upc_all_scatter}:
+    \State // The following can be implemented efficient with \texttt{upc\_all\_scatter}:
     \State numKmersToReceive $\gets$ new int[numThreads]
     \For{each thread $j$}
-      \State numKmersToReceive[$j$] $\gets$ localBuckets[$j*$numThreads$+i$].size()
+      \State numKmersToReceive[$j$] $\gets$ localBuckets[$j*\texttt{numThreads}+i$].size()
     \EndFor
     localKmers = new PackedKmer[numKmersToReceive.sum()]
     \For{each thread $j$}
