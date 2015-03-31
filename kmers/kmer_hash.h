@@ -33,14 +33,6 @@ hash_table_t* create_hash_table(int64_t nEntries, memory_heap_t *memory_heap)
    return result;
 }
 
-/* Further coarsen a hash value.  Useful for partitioning a hashtable across
- * @coarseTableSize processors.
- */
-int64_t coarseHash(int64_t hash, int64_t coarseTableSize, int64_t hashTableSize) {
-  assert(coarseTableSize < hashTableSize);
-  return hash % coarseTableSize;
-}
-
 /* Auxiliary function for computing hash values */
 int64_t hashseq(int64_t  hashtable_size, char *seq, int size)
 {

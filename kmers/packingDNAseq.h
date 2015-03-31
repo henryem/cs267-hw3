@@ -38,6 +38,16 @@ void init_LookupTable()
 	}
 }
 
+/** Should be kept consistent with convertFourMerToPackedCode() below. */
+unsigned char convertMerToPackedCode(unsigned char mer) {
+  switch ((char) mer) {
+    case 'A': return 0;
+    case 'C': return 1;
+    case 'G': return 2;
+    case 'T': return 3;
+  }
+}
+
 unsigned char convertFourMerToPackedCode(unsigned char *fourMer)
 {
 	int retval = 0;
