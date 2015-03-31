@@ -11,18 +11,46 @@
 
 const size_t PACKED_KMER_SIZE = KMER_PACKED_LENGTH_WITH_EXT * sizeof(char);
 
+///////////////////////////////////////////////////////////////////////////////
+// begin unpacked_kmer_t
+///////////////////////////////////////////////////////////////////////////////
+
+typedef unsigned char unpacked_kmer_t[LINE_SIZE];
+
+const unsigned char *middle(const unpacked_kmer_t *kmer) {
+  return kmer;
+}
+
+unsigned char leftExtension(const unpacked_kmer_t *kmer) {
+  return kmer[KMER_LENGTH+1];
+}
+
+unsigned char rightExtension(const unpacked_kmer_t *kmer) {
+  return kmer[KMER_LENGTH+2];
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// end packed_kmer_t
+///////////////////////////////////////////////////////////////////////////////
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // begin packed_kmer_t
 ///////////////////////////////////////////////////////////////////////////////
 
-typedef struct packed_kmer_t packed_kmer_t {
-  const unsigned char[KMER_PACKED_LENGTH_WITH_EXT] kmer;
-}
+typedef unsigned char packed_kmer_t[KMER_PACKED_LENGTH_WITH_EXT];
 
 // bool isBackwardStart(packed_kmer_t *kmer) {
-//   return 
+//   return FIXME
 // }
+
+void toPacked(const unpacked_kmer_t *rawKmer, packed_kmer_t *packedKmer) {
+  //FIXME
+}
+
+int64_t hashPackedKmer(const packed_kmer_t *packedKmer, int64_t hashTableSize) {
+  //FIXME
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // end packed_kmer_t
@@ -33,7 +61,7 @@ typedef struct packed_kmer_t packed_kmer_t {
 ///////////////////////////////////////////////////////////////////////////////
 
 typedef struct kmer_list_t kmer_list_t {
-  const unsigned char *kmer;
+  const packed_kmer_t *kmer;
   const kmer_list_t *next;
 }
 
@@ -45,19 +73,19 @@ int listSize(kmer_list_t *list) {
   }
 }
 
-int makeFlatCopy(unsigned char **dst, const kmer_list_t *list) {
+int makeFlatCopy(packed_kmer_t **dst, const kmer_list_t *list) {
   const int size = listSize(list);
-  *dst = (unsigned char *) malloc(size*PACKED_KMER_SIZE);
+  *dst = (packed_kmer_t *) malloc(size*sizeof(packed_kmer_t));
   int i = 0;
   while (list != NULL) {
-    memcpy(&dst[i*PACKED_KMER_SIZE], list->kmer, PACKED_KMER_SIZE);
+    (*dst)[i] = list->kmer;
     list = list->next;;
     i++;
   }
   return size;
 }
 
-kmer_list_t *addFront(const kmer_list_t *list, const unsigned char *kmer) {
+kmer_list_t *addFront(const kmer_list_t *list, const packed_kmer_t *kmer) {
   kmer_list_t* newFront = (kmer_list_t *) malloc(sizeof(kmer_list_t));
   newFront->kmer = kmer;
   newFront->next = list;
@@ -81,7 +109,7 @@ typedef struct kmer_memory_heap_t kmer_memory_heap_t {
   int64_t nextHeapLocation;
 }
 
-kmer_list_t *addFrontWithHeap(const kmer_list_t *list, const unsigned char *kmer, kmer_memory_heap_t *heap) {
+kmer_list_t *addFrontWithHeap(const kmer_list_t *list, const packed_kmer_t *kmer, kmer_memory_heap_t *heap) {
   kmer_list_t *newFront = &heap->heap[heap->nextHeapLocation];
   newFront->kmer = kmer;
   newFront->next = list;
@@ -89,7 +117,7 @@ kmer_list_t *addFrontWithHeap(const kmer_list_t *list, const unsigned char *kmer
   return newFront;
 }
 
-void setFrontWithHeap(kmer_list_t **list, const unsigned char *kmer, kmer_memory_heap_t *heap) {
+void setFrontWithHeap(kmer_list_t **list, const packed_kmer_t *kmer, kmer_memory_heap_t *heap) {
   *list = addFrontWithHeap(*list, kmer, heap);
 }
 
@@ -109,14 +137,14 @@ void freeMemoryHeap(kmer_memory_heap_t *heap) {
 ///////////////////////////////////////////////////////////////////////////////
 
 /** Read kmers for this thread from @inputFileName. */
-unsigned char *readLocalKmers(const char *inputFileName, int nKmersReadTypically, int nKmersToRead, int threadIdx) {
+unpacked_kmer_t *readLocalKmers(const char *inputFileName, int nKmersReadTypically, int nKmersToRead, int threadIdx) {
   const int localCharsToRead = nKmersToRead * LINE_SIZE;
   FILE *inputFile = fopen(inputFileName, "r");
   fseek(inputFile, threadIdx*nKmersReadTypically*LINE_SIZE, SEEK_SET);
   unsigned char *localReadBuffer = (unsigned char*) malloc(localCharsToRead * sizeof(unsigned char));
   fread(localReadBuffer, sizeof(unsigned char), localCharsToRead, inputFile);
   fclose(inputFile);
-  return localReadBuffer;
+  return (unpacked_kmer_t *) localReadBuffer;
 }
 
 
@@ -129,7 +157,7 @@ unsigned char *readLocalKmers(const char *inputFileName, int nKmersReadTypically
   * to thread j.  It is populated below. */
 shared int *NUM_KMERS_PER_SOURCE;
 
-typedef shared [] unsigned char *kmer_send_buffer_shrpt_t;
+typedef shared [] packed_kmer_t *kmer_send_buffer_shrpt_t;
 /** Buffers for sending packed kmers.  The buffer for data sent by thread i
   * to thread j is SEND_BUFFERS[i*nThreads+j].  That buffer is of size
   * NUM_KMERS_PER_SOURCE[i*nThreads+j].  The sending thread is responsible
@@ -144,15 +172,15 @@ shared kmer_send_buffer_shrpt_t *SEND_BUFFERS;
   * @param localRawKmers consists of @nKmersReadLocally kmers,
   *   each taking up LINE_SIZE chars.
   */
-void groupKmersByDestination(const unsigned char *localRawKmers, unsigned char **kmersByDestination, int *numKmersByDestination, const int nKmersReadLocally, const int nThreads, const int globalHashTableSize) {
-  unsigned char *packedKmers = (unsigned char *) malloc(nKmersReadLocally*PACKED_KMER_SIZE);
+void groupKmersByDestination(const unpacked_kmer_t *localRawKmers, packed_kmer_t **kmersByDestination, int *numKmersByDestination, const int nKmersReadLocally, const int nThreads, const int globalHashTableSize) {
+  packed_kmer_t *packedKmers = (packed_kmer_t *) malloc(nKmersReadLocally*sizeof(packed_kmer_t));
   kmer_memory_heap_t *heap = makeMemoryHeap(nKmersReadLocally);
   kmer_list_t **lists = (kmer_list_t **) malloc(nThreads*sizeof(kmer_list_t *));
   for (int rawKmerIdx = 0; rawKmerIdx < nKmersReadLocally; rawKmerIdx++) {
-    const unsigned char *rawKmer = &localRawKmers[rawKmerIdx*LINE_SIZE];
-    unsigned char *packedKmer = &packedKmers[rawKmerIdx*PACKED_KMER_SIZE];
-    packSequence(rawKmer, packedKmer, KMER_LENGTH);
-    int64_t destinationThread = coarseHash(hashkmer(globalHashTableSize, packedKmer), nThreads, globalHashTableSize);
+    const unpacked_kmer_t *rawKmer = &localRawKmers[rawKmerIdx];
+    packed_kmer_t *packedKmer = &packedKmers[rawKmerIdx];
+    toPacked(rawKmer, packedKmer);
+    int64_t destinationThread = coarseHash(hashPackedKmer(packedKmer, globalHashTableSize), nThreads, globalHashTableSize);
     setFrontWithHeap(&lists[destinationThread], packedKmer, heap);
   }
   for (int otherThreadIdx = 0; otherThreadIdx < nThreads; otherThreadIdx++) {
@@ -170,10 +198,10 @@ void groupKmersByDestination(const unsigned char *localRawKmers, unsigned char *
   * starts building its local hashtable.  Note that the buffers themselves in
   * SEND_BUFFERS are freed.
   */
-unsigned char* hashShuffleKmers(const unsigned char *localRawKmers, const int nKmersReadLocally, const int threadIdx, const int nThreads) {
+unsigned char* hashShuffleKmers(const unpacked_kmer_t *localRawKmers, const int nKmersReadLocally, const int threadIdx, const int nThreads) {
   /* Figure out the destination thread for each local kmer.  This also 
    * compresses the raw kmers into packed form. */
-  unsigned char **kmersByDestination = (unsigned char **) malloc(nThreads*sizeof(char *));
+  packed_kmer_t **kmersByDestination = (packed_kmer_t **) malloc(nThreads*sizeof(packed_kmer_t *));
   int *numKmersByDestination = (int *) malloc(nThreads*sizeof(int));
   groupKmersByDestination(localRawKmersBuffer, kmersByDestination, numKmersByDestination, nKmersReadLocally, nThreads);
   
@@ -184,7 +212,7 @@ unsigned char* hashShuffleKmers(const unsigned char *localRawKmers, const int nK
   /* Place our local data in the appropriate shared buffer. */
   SEND_BUFFERS = (shared kmer_send_buffer_shrpt_t *) upc_all_alloc(nThreads, nThreads*sizeof(kmer_send_buffer_shrpt_t));
   for (int otherThreadIdx = 0; otherThreadIdx < nThreads; otherThreadIdx++) {
-    SEND_BUFFERS[threadIdx*nThreads + otherThreadIdx] = (kmer_send_buffer_shrpt_t) upc_alloc(PACKED_KMER_SIZE * numKmersByDestination[otherThreadIdx]);
+    SEND_BUFFERS[threadIdx*nThreads + otherThreadIdx] = (kmer_send_buffer_shrpt_t) upc_alloc(numKmersByDestination[otherThreadIdx]*sizeof(packed_kmer_t));
     upc_memput(SEND_BUFFERS[threadIdx*nThreads + otherThreadIdx], kmersByDestination[otherThreadIdx], numKmersByDestination[otherThreadIdx]);
   }
   
@@ -210,13 +238,13 @@ unsigned char* hashShuffleKmers(const unsigned char *localRawKmers, const int nK
   }
   
   /* Receive our new hash-matched data from the appropriate shared buffer. */
-  unsigned char *receiveBuffer = malloc(PACKED_KMER_SIZE*totalKmersReceived);
+  packed_kmer_t *receiveBuffer = malloc(totalKmersReceived*sizeof(packed_kmer_t));
   for (int otherThreadIdx = 0; otherThreadIdx < nThreads; otherThreadIdx++) {
     // It would probably be much better if we could do asynchronous copying
     // here.  Instead we must wait for each copy to finish before starting the
     // next.
-    unsigned char *receiveBufferStart = receiveBuffer + numKmersBeforeSource[otherThreadIdx];
-    upc_memget(receiveBufferStart, SEND_BUFFERS[otherThreadIdx*nThreads + threadIdx], numKmersBySource[otherThreadIdx];
+    packed_kmer_t *receiveBufferStart = receiveBuffer + numKmersBeforeSource[otherThreadIdx];
+    upc_memget(receiveBufferStart, SEND_BUFFERS[otherThreadIdx*nThreads + threadIdx], numKmersBySource[otherThreadIdx]);
     upc_free(SEND_BUFFERS[otherThreadIdx*nThreads + threadIdx]);
   }
   
@@ -258,7 +286,7 @@ int main(int argc, char *argv[]) {
     nKmersReadTypically;
 
   /* Read the kmers from the input file into a local buffer. */
-  unsigned char *localRawKmersBuffer = readLocalKmers(inputFileName, nKmersReadTypically, nKmersReadLocally, threadIdx);
+  unpacked_kmer_t *localRawKmersBuffer = readLocalKmers(inputFileName, nKmersReadTypically, nKmersReadLocally, threadIdx);
   
 	inputTime += gettime();
 
@@ -282,7 +310,7 @@ int main(int argc, char *argv[]) {
 	//  - For each kmer on this machine, if it is a start kmer, add it to the local start list
 	//  - Now the machine can use this local start list to start building contigs
 	//  - Question: Do we need to load-balance these start lists?  That would be annoying but doable.
-  const unsigned char *localKmers = hashShuffleKmers(localRawKmersBuffer);
+  const packed_kmer_t *localKmers = hashShuffleKmers(localRawKmersBuffer);
 	const   
 	
 	
