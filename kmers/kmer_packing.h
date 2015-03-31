@@ -5,10 +5,13 @@
 #include <stdlib.h>
 #include <math.h> 
 #include <string.h>
-#include "shared_hashtable.h"
+#include "contig_generation.h"
+#include "packingDNAseq.h"
 
 // Forward declarations:
 typedef unsigned char unpacked_kmer_t[LINE_SIZE];
+
+const int KMER_PACKED_LENGTH_WITH_EXT = KMER_PACKED_LENGTH + 1;
 
 /** A packed kmer.  The structure is as follows:
   *  - The first KMER_PACKED_LENGTH chars are for the middle of the kmer.
@@ -65,11 +68,11 @@ const unsigned char *kmerValue(const unpacked_kmer_t *kmer) {
 }
 
 unsigned char backwardExtensionUnpacked(const unpacked_kmer_t *kmer) {
-  return kmer[RAW_KMER_FORWARD_EXT_POS];
+  return (*kmer)[RAW_KMER_FORWARD_EXT_POS];
 }
 
 unsigned char forwardExtensionUnpacked(const unpacked_kmer_t *kmer) {
-  return kmer[RAW_KMER_BACKWARD_EXT_POS];
+  return (*kmer)[RAW_KMER_BACKWARD_EXT_POS];
 }
 
 bool isBackwardStartUnpacked(const unpacked_kmer_t *kmer) {
@@ -87,15 +90,13 @@ int64_t hashUnpackedKmer(const unpacked_kmer_t *unpackedKmer, int64_t hashTableS
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// end packed_kmer_t
+// end unpacked_kmer_t
 ///////////////////////////////////////////////////////////////////////////////
 
 
 ///////////////////////////////////////////////////////////////////////////////
 // begin packed_kmer_t
 ///////////////////////////////////////////////////////////////////////////////
-
-const int KMER_PACKED_LENGTH_WITH_EXT = KMER_PACKED_LENGTH + 1;
 const int KMER_PACKED_EXT_POS = KMER_PACKED_LENGTH_WITH_EXT - 1;
 
 unsigned char *packedKmerValue(const packed_kmer_t *kmer) {
@@ -106,6 +107,23 @@ unsigned char *packedKmerValue(const packed_kmer_t *kmer) {
  * extensions). */
 bool equalsOnKmer(const packed_kmer_t *a, const packed_kmer_t *b) {
   return memcmp(packedKmerValue(a), packedKmerValue(b), KMER_PACKED_LENGTH * sizeof(unsigned char)) == 0 
+}
+
+
+unsigned char backwardExtensionPacked(const unpacked_kmer_t *kmer) {
+  if (isBackwardStartPacked(kmer)) {
+    return START_CHAR;
+  }
+  unsigned char code = (kmer[KMER_PACKED_EXT_POS] & (0x3 << 6)) >> 6;
+  return convertPackedCodeToMer(code);
+}
+
+unsigned char forwardExtensionPacked(const unpacked_kmer_t *kmer) {
+  if (isForwardStartPacked(kmer)) {
+    return START_CHAR;
+  }
+  unsigned char code = (kmer[KMER_PACKED_EXT_POS] & (0x3 << 4)) >> 4;
+  return convertPackedCodeToMer(code);
 }
 
 bool isBackwardStartPacked(const packed_kmer_t *kmer) {
@@ -198,6 +216,7 @@ kmer_memory_heap_t *makeMemoryHeap(int64_t size) {
   kmer_memory_heap_t *heap = (kmer_memory_heap_t *) malloc(sizeof(kmer_memory_heap_t));
   heap->heap = kmers;
   heap->nextHeapLocation = 0;
+  return heap;
 }
 
 void freeMemoryHeap(kmer_memory_heap_t *heap) {

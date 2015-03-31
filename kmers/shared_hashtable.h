@@ -7,6 +7,7 @@
 #include <math.h> 
 #include <string.h>
 #include "contig_generation.h"
+#include "kmer_packing.h"
 
 /** A linked list designed to hold a short list of packed kmers, optimized for
   * searching when the first element of this list is what we're looking for.
