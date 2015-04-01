@@ -5,13 +5,15 @@
 #include <stdlib.h>
 #include <math.h> 
 #include <string.h>
+#include <stdbool.h>
 #include "contig_generation.h"
 #include "packingDNAseq.h"
 
 // Forward declarations:
-typedef unsigned char unpacked_kmer_t[LINE_SIZE];
 
-const int KMER_PACKED_LENGTH_WITH_EXT = KMER_PACKED_LENGTH + 1;
+typedef struct unpacked_kmer_t {
+  unsigned char data[LINE_SIZE];
+} unpacked_kmer_t;
 
 /** A packed kmer.  The structure is as follows:
   *  - The first KMER_PACKED_LENGTH chars are for the middle of the kmer.
@@ -26,8 +28,12 @@ const int KMER_PACKED_LENGTH_WITH_EXT = KMER_PACKED_LENGTH + 1;
   * These packed kmers are designed mostly to be convenient and reasonably
   * efficient for transport.
   */
-typedef unsigned char packed_kmer_t[KMER_PACKED_LENGTH_WITH_EXT];
+typedef struct packed_kmer_t {
+  unsigned char data[KMER_PACKED_LENGTH_WITH_EXT];
+} packed_kmer_t;
+
 void toPacked(const unpacked_kmer_t *rawKmer, packed_kmer_t *packedKmer);
+int64_t hashPackedKmer(const packed_kmer_t *packedKmer, int64_t hashTableSize);
 
 int64_t hashBytes(int64_t hashtable_size, char *seq, int size) {
    unsigned long hashval;
@@ -64,15 +70,15 @@ const int RAW_KMER_FORWARD_EXT_POS = KMER_LENGTH+2;
 const char START_CHAR = 'F';
 
 const unsigned char *kmerValue(const unpacked_kmer_t *kmer) {
-  return kmer;
+  return kmer->data;
 }
 
 unsigned char backwardExtensionUnpacked(const unpacked_kmer_t *kmer) {
-  return (*kmer)[RAW_KMER_FORWARD_EXT_POS];
+  return kmer->data[RAW_KMER_BACKWARD_EXT_POS];
 }
 
 unsigned char forwardExtensionUnpacked(const unpacked_kmer_t *kmer) {
-  return (*kmer)[RAW_KMER_BACKWARD_EXT_POS];
+  return kmer->data[RAW_KMER_FORWARD_EXT_POS];
 }
 
 bool isBackwardStartUnpacked(const unpacked_kmer_t *kmer) {
@@ -86,7 +92,7 @@ bool isForwardStartUnpacked(const unpacked_kmer_t *kmer) {
 int64_t hashUnpackedKmer(const unpacked_kmer_t *unpackedKmer, int64_t hashTableSize) {
   packed_kmer_t packedKmer;
   toPacked(unpackedKmer, &packedKmer);
-  return hashPackedKmer(packedKmer, hashTableSize);
+  return hashPackedKmer(&packedKmer, hashTableSize);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -99,63 +105,64 @@ int64_t hashUnpackedKmer(const unpacked_kmer_t *unpackedKmer, int64_t hashTableS
 ///////////////////////////////////////////////////////////////////////////////
 const int KMER_PACKED_EXT_POS = KMER_PACKED_LENGTH_WITH_EXT - 1;
 
-unsigned char *packedKmerValue(const packed_kmer_t *kmer) {
-  return kmer;
+unsigned char *packedKmerValue(packed_kmer_t *kmer) {
+  return kmer->data;
 }
 
 /* True if @a and @b agree on their kmer values (not necessarily their
  * extensions). */
 bool equalsOnKmer(const packed_kmer_t *a, const packed_kmer_t *b) {
-  return memcmp(packedKmerValue(a), packedKmerValue(b), KMER_PACKED_LENGTH * sizeof(unsigned char)) == 0 
-}
-
-
-unsigned char backwardExtensionPacked(const unpacked_kmer_t *kmer) {
-  if (isBackwardStartPacked(kmer)) {
-    return START_CHAR;
-  }
-  unsigned char code = (kmer[KMER_PACKED_EXT_POS] & (0x3 << 6)) >> 6;
-  return convertPackedCodeToMer(code);
-}
-
-unsigned char forwardExtensionPacked(const unpacked_kmer_t *kmer) {
-  if (isForwardStartPacked(kmer)) {
-    return START_CHAR;
-  }
-  unsigned char code = (kmer[KMER_PACKED_EXT_POS] & (0x3 << 4)) >> 4;
-  return convertPackedCodeToMer(code);
+  return memcmp(packedKmerValue(a), packedKmerValue(b), KMER_PACKED_LENGTH * sizeof(unsigned char)) == 0; 
 }
 
 bool isBackwardStartPacked(const packed_kmer_t *kmer) {
-  return (kmer[KMER_PACKED_EXT_POS] & (1 << 3)) != 0;
+  return (kmer->data[KMER_PACKED_EXT_POS] & (1 << 3)) != 0;
 }
 
 bool isForwardStartPacked(const packed_kmer_t *kmer) {
-  return (kmer[KMER_PACKED_EXT_POS] & (1 << 2)) != 0;
+  return (kmer->data[KMER_PACKED_EXT_POS] & (1 << 2)) != 0;
+}
+
+unsigned char backwardExtensionPacked(const packed_kmer_t *kmer) {
+  if (isBackwardStartPacked(kmer)) {
+    return START_CHAR;
+  }
+  unsigned char code = (kmer->data[KMER_PACKED_EXT_POS] & (0x3 << 6)) >> 6;
+  return convertPackedCodeToMer(code);
+}
+
+unsigned char forwardExtensionPacked(const packed_kmer_t *kmer) {
+  if (isForwardStartPacked(kmer)) {
+    return START_CHAR;
+  }
+  unsigned char code = (kmer->data[KMER_PACKED_EXT_POS] & (0x3 << 4)) >> 4;
+  return convertPackedCodeToMer(code);
 }
 
 void toPacked(const unpacked_kmer_t *rawKmer, packed_kmer_t *packedKmer) {
 	// See formatting above.
-  packSequence(kmer(rawKmer), packedKmer, KMER_LENGTH);
-	packedKmer[KMER_PACKED_EXT_POS] = 0;
-	unsigned char backExt = backwardExtension(rawKmer);
-	unsigned char forExt = forwardExtension(rawKmer);
-	packedKmer[KMER_PACKED_EXT_POS] |= (
+  unsigned char *rawData = kmerValue(rawKmer);
+  unsigned char *packedData = packedKmerValue(packedKmer);
+  packSequence(rawData, packedData, KMER_LENGTH);
+	packedData[KMER_PACKED_EXT_POS] = 0;
+	unsigned char backExt = backwardExtensionUnpacked(rawKmer);
+	unsigned char forExt = forwardExtensionUnpacked(rawKmer);
+	packedData[KMER_PACKED_EXT_POS] |= (
 		(backExt == START_CHAR ? 0 : convertMerToPackedCode(backExt))
 		<< 6);
-	packedKmer[KMER_PACKED_EXT_POS] |= (
+	packedData[KMER_PACKED_EXT_POS] |= (
 		(forExt == START_CHAR ? 0 : convertMerToPackedCode(forExt))
 		<< 4);
-	packedKmer[KMER_PACKED_EXT_POS] |= (
+	packedData[KMER_PACKED_EXT_POS] |= (
 		(backExt == START_CHAR ? 1 : 0)
 		<< 3);
-	packedKmer[KMER_PACKED_EXT_POS] |= (
+	packedData[KMER_PACKED_EXT_POS] |= (
 		(forExt == START_CHAR ? 1 : 0)
 		<< 2);
 }
 
 int64_t hashPackedKmer(const packed_kmer_t *packedKmer, int64_t hashTableSize) {
-  return hashKmerBytes(hashTableSize, (char*) packedKmer);
+  return hashKmerBytes(hashTableSize, packedKmerValue(packedKmer));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -167,9 +174,10 @@ int64_t hashPackedKmer(const packed_kmer_t *packedKmer, int64_t hashTableSize) {
 ///////////////////////////////////////////////////////////////////////////////
 
 /** A linked list designed to hold packed kmers somewhat efficiently. */
-typedef struct packed_kmer_list_t packed_kmer_list_t {
-  const packed_kmer_t *kmer;
-  const packed_kmer_list_t *next;
+typedef struct packed_kmer_list_t packed_kmer_list_t;
+struct packed_kmer_list_t {
+  packed_kmer_t *kmer;
+  packed_kmer_list_t *next;
 };
 
 int packedListSize(const packed_kmer_list_t *list) {
@@ -184,20 +192,21 @@ int packedListSize(const packed_kmer_list_t *list) {
 /* (*dst) is now a flat array of packed_kmer_t. */
 int makeFlatCopy(packed_kmer_t **dst, const packed_kmer_list_t *list) {
   const int size = packedListSize(list);
-  *dst = (packed_kmer_t *) malloc(size*sizeof(packed_kmer_t));
+  packed_kmer_t *flatCopy = (packed_kmer_t *) malloc(size*sizeof(packed_kmer_t));
   int i = 0;
   while (list != NULL) {
-    memcpy(&((*dst)[i]), list->kmer, sizeof(packed_kmer_t)); //FIXME: Not sure if this will work.
+    memcpy(&flatCopy[i], list->kmer, sizeof(packed_kmer_t));
     list = list->next;;
     i++;
   }
+  *dst = flatCopy;
   return size;
 }
 
-typedef struct kmer_memory_heap_t kmer_memory_heap_t {
+typedef struct kmer_memory_heap_t {
   packed_kmer_list_t *heap;
   int64_t nextHeapLocation;
-};
+} kmer_memory_heap_t;
 
 packed_kmer_list_t *addFrontWithHeap(const packed_kmer_list_t *list, const packed_kmer_t *kmer, kmer_memory_heap_t *heap) {
   packed_kmer_list_t *newFront = &heap->heap[heap->nextHeapLocation];
@@ -220,7 +229,8 @@ kmer_memory_heap_t *makeMemoryHeap(int64_t size) {
 }
 
 void freeMemoryHeap(kmer_memory_heap_t *heap) {
-  free(heap.heap);
+  free(heap->heap);
+  free(heap);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -234,9 +244,10 @@ void freeMemoryHeap(kmer_memory_heap_t *heap) {
 
 /** A simple linked list with moderately inefficient operations.  Designed to
   * hold a short list of start kmers. */
-typedef struct unpacked_kmer_list_t unpacked_kmer_list_t {
-  const unpacked_kmer_t *kmer;
-  const unpacked_kmer_list_t *next;
+typedef struct unpacked_kmer_list_t unpacked_kmer_list_t;
+struct unpacked_kmer_list_t {
+  unpacked_kmer_t *kmer;
+  unpacked_kmer_list_t *next;
 };
 
 unpacked_kmer_list_t *makeUnpackedList() {

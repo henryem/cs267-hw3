@@ -39,13 +39,15 @@ void groupKmersByDestination(const unpacked_kmer_t *localRawKmers, packed_kmer_t
     const unpacked_kmer_t *rawKmer = &localRawKmers[rawKmerIdx];
     packed_kmer_t *packedKmer = &packedKmers[rawKmerIdx];
     toPacked(rawKmer, packedKmer);
-    int64_t hashValue = hashPackedKmer(packedKmerValue(packedKmer), globalHashTableSize);
+    int64_t hashValue = hashPackedKmer(packedKmer, globalHashTableSize);
     int64_t destinationThread = coarseHash(hashValue, nThreads, globalHashTableSize);
     setFrontWithHeap(&lists[destinationThread], packedKmer, heap);
   }
+  
   for (int otherThreadIdx = 0; otherThreadIdx < nThreads; otherThreadIdx++) {
     int size = makeFlatCopy(&kmersByDestination[otherThreadIdx], lists[otherThreadIdx]);
     numKmersByDestination[otherThreadIdx] = size;
+    printf("Thread %d sending %d kmers to thread %d\n", MYTHREAD, size, otherThreadIdx);
   }
 }
 
@@ -63,11 +65,11 @@ int hashShuffleKmers(packed_kmer_t **dst, const unpacked_kmer_t *localRawKmers, 
    * compresses the raw kmers into packed form. */
   packed_kmer_t **kmersByDestination = (packed_kmer_t **) malloc(nThreads*sizeof(packed_kmer_t *));
   int *numKmersByDestination = (int *) malloc(nThreads*sizeof(int));
-  groupKmersByDestination(localRawKmersBuffer, kmersByDestination, numKmersByDestination, nKmersReadLocally, nThreads, globalHashTableSize);
+  groupKmersByDestination(localRawKmers, kmersByDestination, numKmersByDestination, nKmersReadLocally, nThreads, globalHashTableSize);
   
   /* Tell everyone how many kmers to expect from us. */
   NUM_KMERS_PER_SOURCE = (shared int *) upc_all_alloc(nThreads, nThreads*sizeof(int));
-  upc_memput(numKmersByDestination, NUM_KMERS_PER_SOURCE + threadIdx*nThreads, nThreads);
+  upc_memput(NUM_KMERS_PER_SOURCE + threadIdx*nThreads, numKmersByDestination, nThreads*sizeof(int));
   
   /* Place our local data in the appropriate shared buffer. */
   SEND_BUFFERS = (shared kmer_send_buffer_shrpt_t *) upc_all_alloc(nThreads, nThreads*sizeof(kmer_send_buffer_shrpt_t));
@@ -84,7 +86,8 @@ int hashShuffleKmers(packed_kmer_t **dst, const unpacked_kmer_t *localRawKmers, 
   
   /* Compute how much data we are to receive. */
   int totalKmersReceived = 0;
-  int numKmersBySource = malloc(nThreads*sizeof(int));
+  int *numKmersBySource = (int *) malloc(nThreads*sizeof(int));
+  int *numKmersBeforeSource = (int *) malloc(nThreads*sizeof(int));
   for (int otherThreadIdx = 0; otherThreadIdx < nThreads; otherThreadIdx++) {
     // Better to use a prefix sum here, but this will only take O(p) time anyway.
     const int numReceived = NUM_KMERS_PER_SOURCE[otherThreadIdx*nThreads + threadIdx];
@@ -114,6 +117,7 @@ int hashShuffleKmers(packed_kmer_t **dst, const unpacked_kmer_t *localRawKmers, 
   free(kmersByDestination);
   free(numKmersByDestination);
   free(numKmersBySource);
+  free(numKmersBeforeSource);
   
   return totalKmersReceived;
 }
