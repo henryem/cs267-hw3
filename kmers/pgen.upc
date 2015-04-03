@@ -78,7 +78,7 @@ int main(int argc, char *argv[]) {
   init_LookupTable();
   const char *inputFileName = argv[1];
   char outputFileName[256];
-  snprintf(outputFileName, sizeof outputFileName, "pgen-p%d.out", MYTHREAD);
+  snprintf(outputFileName, sizeof outputFileName, "pgen-p%dt%d.out", MYTHREAD, THREADS);
 
   /** Read input **/
   inputTime -= gettime();
