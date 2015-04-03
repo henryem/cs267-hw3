@@ -62,7 +62,7 @@ shared [1] local_bucket_sizes_t *BUCKET_SIZES;
   * is 1-cyclic.  We cannot say shared [LOCAL_LIST_SIZE] because we do not know
   * the local list size (i.e. nKmers / nThreads) at compile time.
   */
-void buildBroadcastDirectory(const packed_kmer_list_t **localBucketLists, const int sizePerThread, const int threadIdx, const int nThreads) {
+void buildBroadcastDirectory(const packed_kmer_list_t **localBucketLists, const int numLocalKmers, const int sizePerThread, const int threadIdx, const int nThreads) {
   DIRECTORY = upc_all_alloc(nThreads, sizeof(local_buckets_t));
   BUCKET_SIZES = upc_all_alloc(nThreads, sizeof(local_bucket_sizes_t));
   
@@ -74,38 +74,18 @@ void buildBroadcastDirectory(const packed_kmer_list_t **localBucketLists, const 
   int *privateBucketSizes = (int *) localBucketSizes;
   
   // Flatten each list into (our private pointer to) shared space.
+  shared_bucket_t localBucketStorage = upc_alloc(numLocalKmers*sizeof(packed_kmer_t));
+  packed_kmer_t *privateBucketStorage = (packed_kmer_t *) localBucketStorage;
+  int numKmersEncountered = 0;
   for (int localBucketIdx = 0; localBucketIdx < sizePerThread; localBucketIdx++) {
-    if (threadIdx == 0) {
-      printf("Flattening bucket %d on thread 0: 0.\n", localBucketIdx);
-    }
     packed_kmer_list_t *linkedList = localBucketLists[localBucketIdx];
-    if (threadIdx == 0) {
-      printf("Flattening bucket %d on thread 0: 1.\n", localBucketIdx);
-    }
     int bucketSize = packedListSize(linkedList);
-    if (threadIdx == 0) {
-      printf("Flattening bucket %d on thread 0: 2.\n", localBucketIdx);
-    }
     privateBucketSizes[localBucketIdx] = bucketSize;
-    if (threadIdx == 0) {
-      printf("Flattening bucket %d on thread 0: 3.\n", localBucketIdx);
-    }
-    shared_bucket_t localBucket = upc_alloc(bucketSize*sizeof(packed_kmer_t));
-    if (threadIdx == 0) {
-      printf("Flattening bucket %d on thread 0: 4.\n", localBucketIdx);
-    }
+    shared_bucket_t localBucket = localBucketStorage + numKmersEncountered;
     privateBuckets[localBucketIdx] = localBucket;
-    if (threadIdx == 0) {
-      printf("Flattening bucket %d on thread 0: 5.\n", localBucketIdx);
-    }
-    packed_kmer_t *privateBucket = (packed_kmer_t *) localBucket;
-    if (threadIdx == 0) {
-      printf("Flattening bucket %d on thread 0: 6.\n", localBucketIdx);
-    }
+    packed_kmer_t *privateBucket = privateBucketStorage + numKmersEncountered;
     toFlatCopy(privateBucket, linkedList, bucketSize);
-    if (threadIdx == 0) {
-      printf("Flattening bucket %d on thread 0: 7.\n", localBucketIdx);
-    }
+    numKmersEncountered += bucketSize;
   }
 
   //FIXME: May not need a upc_barrier here.
@@ -133,7 +113,7 @@ shared_hash_table_t* buildSharedHashTable(const packed_kmer_t *localKmers, const
   
   printf("Added %d kmers to the hash table on thread %d.\n", numLocalKmers, threadIdx);
   
-  buildBroadcastDirectory(temporaryBuckets, result->sizePerThread, threadIdx, nThreads);
+  buildBroadcastDirectory(temporaryBuckets, numLocalKmers, result->sizePerThread, threadIdx, nThreads);
   
   printf("Finished broadcasting directory on thread %d.\n", threadIdx);
   
