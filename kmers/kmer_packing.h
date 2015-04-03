@@ -34,31 +34,53 @@ typedef struct packed_kmer_t {
 
 void toPacked(const unpacked_kmer_t *rawKmer, packed_kmer_t *packedKmer);
 int64_t hashPackedKmer(const packed_kmer_t *packedKmer, int64_t hashTableSize);
+unsigned char *packedKmerValue(packed_kmer_t *kmer);
+unsigned char backwardExtensionPacked(const packed_kmer_t *kmer);
+unsigned char forwardExtensionPacked(const packed_kmer_t *kmer);
+
+///////////////////////////////////////////////////////////////////////////////
+// begin general utils for kmer packing
+///////////////////////////////////////////////////////////////////////////////
 
 int64_t hashBytes(int64_t hashtable_size, char *seq, int size) {
-   unsigned long hashval;
-   hashval = 5381;
-   for(int i = 0; i < size; i++) {
-      hashval = seq[i] +  (hashval << 5) + hashval;
-   }
-   
-   return hashval % hashtable_size;
+  unsigned long hashval;
+  hashval = 5381;
+  for (int i = 0; i < size; i++) {
+    hashval = seq[i] +  (hashval << 5) + hashval;
+  }
+  return hashval % hashtable_size;
 }
 
 /* Returns the hash value of a kmer (without paying attention to its
  * extensions). */
 int64_t hashKmerBytes(int64_t hashtable_size, char *seq) {
-   return hashBytes(hashtable_size, seq, KMER_PACKED_LENGTH);
+  return hashBytes(hashtable_size, seq, KMER_PACKED_LENGTH);
 }
 
+int divRoundUp(int dividend, int divisor) {
+  return (dividend + divisor - 1) / divisor;
+}
 
-/* Further coarsen a hash value.  Useful for partitioning a hashtable across
- * @coarseTableSize processors.
+/* Further coarsen a hash value.  For example, if hashTableSize is 8 and
+ * coarseTableSize is 2, then hash values 0..3 will be mapped to coarse hash
+ * value 0, and hash values 4..7 will be mapped to 1.
+ * 
+ * Useful for partitioning a hashtable across @coarseTableSize processors.
  */
 int64_t coarseHash(int64_t hash, int64_t coarseTableSize, int64_t hashTableSize) {
   assert(coarseTableSize < hashTableSize);
-  return hash % coarseTableSize;
+  int64_t elementsPerCoarseElement = divRoundUp(hashTableSize, coarseTableSize);
+  return hash / elementsPerCoarseElement;
 }
+
+//NOTE: Works only for the short (19 kmer) size.
+void printKmer(unsigned char * const kmer, unsigned char backwardExt, unsigned char forwardExt) {
+  printf("%19.19s\t%c%c", kmer, backwardExt, forwardExt);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// end general utils for kmer packing
+///////////////////////////////////////////////////////////////////////////////
 
 ///////////////////////////////////////////////////////////////////////////////
 // begin unpacked_kmer_t
@@ -89,10 +111,20 @@ bool isForwardStartUnpacked(const unpacked_kmer_t *kmer) {
   return forwardExtensionUnpacked(kmer) == START_CHAR;
 }
 
+void unpack(unpacked_kmer_t *dst, const packed_kmer_t *packed) {
+  unpackSequence(packedKmerValue(packed), kmerValue(dst), KMER_LENGTH);
+  dst->data[RAW_KMER_BACKWARD_EXT_POS] = backwardExtensionPacked(packed);
+  dst->data[RAW_KMER_FORWARD_EXT_POS] = forwardExtensionPacked(packed);
+}
+
 int64_t hashUnpackedKmer(const unpacked_kmer_t *unpackedKmer, int64_t hashTableSize) {
   packed_kmer_t packedKmer;
   toPacked(unpackedKmer, &packedKmer);
   return hashPackedKmer(&packedKmer, hashTableSize);
+}
+
+void printUnpacked(const unpacked_kmer_t *kmer) {
+  printKmer(kmerValue(kmer), backwardExtensionUnpacked(kmer), forwardExtensionUnpacked(kmer));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -165,6 +197,12 @@ int64_t hashPackedKmer(const packed_kmer_t *packedKmer, int64_t hashTableSize) {
   return hashKmerBytes(hashTableSize, packedKmerValue(packedKmer));
 }
 
+void printPacked(const packed_kmer_t *kmer) {
+  unpacked_kmer_t unpacked;
+  unpack(&unpacked, kmer);
+  printKmer(kmerValue(&unpacked), backwardExtensionPacked(kmer), forwardExtensionPacked(kmer));
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // end packed_kmer_t
 ///////////////////////////////////////////////////////////////////////////////
@@ -189,17 +227,19 @@ int packedListSize(const packed_kmer_list_t *list) {
   return size;
 }
 
+/* dst is now a flat array of packed_kmer_t.  It should be preallocated. */
+void toFlatCopy(packed_kmer_t *dst, const packed_kmer_list_t *list, int listSize) {
+  for (int i = 0; i < listSize; i++) {
+    memcpy(&dst[i], list->kmer, sizeof(packed_kmer_t));
+    list = list->next;
+  }
+}
+
 /* (*dst) is now a flat array of packed_kmer_t. */
 int makeFlatCopy(packed_kmer_t **dst, const packed_kmer_list_t *list) {
   const int size = packedListSize(list);
-  packed_kmer_t *flatCopy = (packed_kmer_t *) malloc(size*sizeof(packed_kmer_t));
-  int i = 0;
-  while (list != NULL) {
-    memcpy(&flatCopy[i], list->kmer, sizeof(packed_kmer_t));
-    list = list->next;;
-    i++;
-  }
-  *dst = flatCopy;
+  *dst = (packed_kmer_t *) malloc(size*sizeof(packed_kmer_t));
+  toFlatCopy(*dst, list, size);
   return size;
 }
 

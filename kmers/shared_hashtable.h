@@ -9,57 +9,83 @@
 #include "contig_generation.h"
 #include "kmer_packing.h"
 
-/** A linked list designed to hold a short list of packed kmers, optimized for
-  * searching when the first element of this list is what we're looking for.
-  * Designed for use in a distributed hashtable where we want to minimize
-  * pointer chasing.  Can be shared. */
-typedef struct shareable_kmer_list_t shareable_kmer_list_t;
-typedef shared [] shareable_kmer_list_t *ptr_to_shared_list_t;
-
-struct shareable_kmer_list_t {
-  packed_kmer_t kmer;
-  ptr_to_shared_list_t next;
-  // We may encounter uninitialized lists.  Check this flag to see whether
-  // a list is initialized.
-  bool isInitialized;
-};
-
-/** Add @kmer to the front of the list, making a new one.  The new head
-  * replaces the current one at *list, and the old head (if it was ever
-  * initialized) is given a new place in memory, with affinity to the calling
-  * thread.
-  */
-void addFront(ptr_to_shared_list_t list, const packed_kmer_t *kmer) {
-  shareable_kmer_list_t oldHead = *list;
-  ptr_to_shared_list_t newNext;
-  if (oldHead.isInitialized) {
-    newNext = (ptr_to_shared_list_t) upc_alloc(sizeof(shareable_kmer_list_t));
-    upc_memput(newNext, &oldHead, sizeof(shareable_kmer_list_t));
-  } else {
-    newNext = NULL;
-  }
-  shareable_kmer_list_t newFrontTmp;
-  memcpy(&(newFrontTmp.kmer), kmer, sizeof(packed_kmer_t));
-  newFrontTmp.next = newNext;
-  newFrontTmp.isInitialized = true;
-  upc_memput(list, &newFrontTmp, sizeof(shareable_kmer_list_t));
-}
-
-//FIXME: Make this freeable.
-//FIXME: Could use a memory heap for the extra allocations above.
-
+typedef shared [] packed_kmer_t *shared_bucket_t;
+typedef shared [] shared_bucket_t *local_buckets_t;
+typedef shared [] int *local_bucket_sizes_t;
 
 typedef struct shared_hash_table_t {
   int64_t size;
   int64_t sizePerThread;
-  shared [] shareable_kmer_list_t *localLists;
+  int nThreads;
 } shared_hash_table_t;
 
-void add(shared_hash_table_t *table, const packed_kmer_t *kmer) {
-  int64_t hashValue = hashPackedKmer(kmer, table->size);
-  assert(coarseHash(hashValue, THREADS, table->size) == MYTHREAD);
-  //TODO: Also assert that the blocking strategy worked correctly.
-  addFront(&(table->localLists[hashValue]), kmer);
+int64_t localHashValue(int64_t hashValue, int threadIdx, int nThreads, int64_t maxHashValue) {
+  int64_t range = maxHashValue / nThreads;
+  return hashValue % range; //NOTE: Assumes maxHashValue > nThreads.
+}
+
+void addToTemporaryBucket(packed_kmer_list_t **temporaryBuckets, kmer_memory_heap_t *heap, const packed_kmer_t *kmer, const int threadIdx, const int nThreads, const int tableSize) {
+  int64_t hashValue = hashPackedKmer(kmer, tableSize);
+  int64_t localHash = localHashValue(hashValue, threadIdx, nThreads, tableSize);
+  assert(coarseHash(hashValue, nThreads, tableSize) == threadIdx);
+  temporaryBuckets[localHash] = addFrontWithHeap(temporaryBuckets[localHash], kmer, heap);
+}
+
+shared [1] local_buckets_t *DIRECTORY;
+shared [1] local_bucket_sizes_t *BUCKET_SIZES;
+
+/** Note: The below description is currently false.  The directory returned
+  * is itself shared; each thread does not get its own private copy.  This
+  * may be very inefficient, adding an extra communication step to every
+  * table lookup unless the compiler (or runtime?) is smart about caching.
+  * But apparently different threads may have different memory representations
+  * of the same shared pointer, so that copying a shared pointer to another
+  * thread via memcpy does not work.  There must be some way to translate the
+  * pointer correctly, but I cannot find it and it is probably UPC compiler
+  * dependent. :-(
+  * 
+  * Builds, on each thread, a private array of @nThreads pointers-to-shared.
+  * The ith pointer in the returned array points to the start of the local
+  * bucket-list on thread i.  The (shared, with local affinity) bucket-list for
+  * this thread is passed as an argument.
+  * 
+  * The caller is responsible for freeing both the returned list and the
+  * bucket-lists on each thread.
+  * 
+  * The reason for this bizarre, inefficient directory strategy is that
+  * we do not want to fix the number of threads or kmers at compile time, and
+  * UPC does not support dynamic block strategies.
+  * upc_all_alloc(blockSize, nThreads) might
+  * do the right thing, but its value must be cast to some kind of static
+  * shared type.  shared [] foo * tells the compiler that everything lives
+  * on one thread, while shared [1] foo * tells the compiler that the layout
+  * is 1-cyclic.  We cannot say shared [LOCAL_LIST_SIZE] because we do not know
+  * the local list size (i.e. nKmers / nThreads) at compile time.
+  */
+void buildBroadcastDirectory(const packed_kmer_list_t **localBucketLists, const int sizePerThread, const int threadIdx, const int nThreads) {
+  DIRECTORY = upc_all_alloc(nThreads, sizeof(local_buckets_t));
+  BUCKET_SIZES = upc_all_alloc(nThreads, sizeof(local_bucket_sizes_t));
+  
+  local_buckets_t localBuckets = upc_alloc(sizePerThread*sizeof(shared_bucket_t *));
+  DIRECTORY[threadIdx] = localBuckets;
+  shared_bucket_t *privateBuckets = (shared_bucket_t *) localBuckets;
+  local_bucket_sizes_t localBucketSizes = upc_alloc(sizePerThread*sizeof(int));
+  BUCKET_SIZES[threadIdx] = localBucketSizes;
+  int *privateBucketSizes = (int *) localBucketSizes;
+  
+  // Flatten each list into (our private pointer to) shared space.
+  for (int localBucketIdx = 0; localBucketIdx < sizePerThread; localBucketIdx++) {
+    packed_kmer_list_t *linkedList = localBucketLists[localBucketIdx];
+    int bucketSize = packedListSize(linkedList);
+    privateBucketSizes[localBucketIdx] = bucketSize;
+    shared_bucket_t localBucket = upc_alloc(bucketSize*sizeof(packed_kmer_t));
+    privateBuckets[localBucketIdx] = localBucket;
+    packed_kmer_t *privateBucket = (packed_kmer_t *) localBucket;
+    toFlatCopy(privateBucket, linkedList, bucketSize);
+  }
+
+  //FIXME: May not need a upc_barrier here.
+  upc_barrier;
 }
 
 shared_hash_table_t* buildSharedHashTable(const packed_kmer_t *localKmers, const int numLocalKmers, const int threadIdx, const int nThreads, const int tableSize) {
@@ -69,41 +95,45 @@ shared_hash_table_t* buildSharedHashTable(const packed_kmer_t *localKmers, const
   
   result->size = tableSize;
   result->sizePerThread = tableSize / nThreads;
-  size_t blockSizeBytes = result->sizePerThread * sizeof(shareable_kmer_list_t);
-  result->localLists = (shared [] shareable_kmer_list_t *) upc_all_alloc(blockSizeBytes, nThreads);
-  shared [] shareable_kmer_list_t *myBlockStart = &(result->localLists[threadIdx*result->sizePerThread]);
-  upc_memset(myBlockStart, 0, blockSizeBytes);
+  result->nThreads = nThreads;
   
-  /* Add all the local kmers. */
+  /* Add all the local kmers to temporary buckets before copying them to shared
+   * memory.  This is done so that we can avoid implementing a dynamic array
+   * in shared memory. */
+  packed_kmer_list_t **temporaryBuckets = malloc(result->sizePerThread*sizeof(packed_kmer_list_t *));
+  kmer_memory_heap_t *heap = makeMemoryHeap(numLocalKmers);
   for (int i = 0; i < numLocalKmers; i++) {
-    add(result, &localKmers[i]);
+    addToTemporaryBucket(temporaryBuckets, heap, &localKmers[i], threadIdx, nThreads, tableSize);
   }
+  
+  printf("Added %d kmers to the hash table on thread %d.\n", numLocalKmers, threadIdx);
+  
+  buildBroadcastDirectory(temporaryBuckets, result->sizePerThread, threadIdx, nThreads);
+  
+  free(temporaryBuckets);
+  freeMemoryHeap(heap);
   
   return result;
 }
 
 char lookupForwardExtension(const shared_hash_table_t *table, const packed_kmer_t *kmer) {
   int64_t hashValue = hashPackedKmer(kmer, table->size);
+  int64_t ownerThread = coarseHash(hashValue, table->nThreads, table->size);
+  int64_t localHash = localHashValue(hashValue, ownerThread, table->nThreads, table->size);
   
-  shareable_kmer_list_t remainingBucket = table->localLists[hashValue];
-  // The unusual pointer chasing here is because of our weird scheme to
-  // optimize communication in the case when the list has 1 element.  The
-  // element at table->localLists[hashValue] might be an uninitialized list-
-  // plus-kmer; or else it is initialized and the list is a regular linked list
-  // terminating at NULL.
-  if (remainingBucket.isInitialized) {
-    while (true) {
-      if (equalsOnKmer(kmer, &remainingBucket.kmer)) {
-        return forwardExtensionPacked(&remainingBucket.kmer);
-      }
-      if (remainingBucket.next == NULL) {
-        break;
-      } else {
-        upc_memget(&remainingBucket, remainingBucket.next, sizeof(shareable_kmer_list_t));
-      }
+  const int bucketSize = BUCKET_SIZES[ownerThread][localHash];
+  const packed_kmer_t *bucket = malloc(bucketSize*sizeof(packed_kmer_t));
+  upc_memget(bucket, DIRECTORY[ownerThread][localHash], bucketSize*sizeof(packed_kmer_t));
+  
+  for (int kmerIdx = 0; kmerIdx < bucketSize; kmerIdx++) {
+    if (equalsOnKmer(&bucket[kmerIdx], kmer)) {
+      return forwardExtensionPacked(&bucket[kmerIdx]);
     }
   }
-  
+
+  printf("No match found for kmer ");
+  printPacked(kmer);
+  printf("\n");
   assert(0);
   return 0;
 }

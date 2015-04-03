@@ -57,6 +57,7 @@ unsigned char convertMerToPackedCode(unsigned char mer) {
     case 'G': return 2;
     case 'T': return 3;
   }
+  printf("Bad mer found: %d\n", mer);
   assert(0);
   return 0;
 }

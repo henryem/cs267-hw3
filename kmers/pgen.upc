@@ -10,12 +10,9 @@
 #include "kmer_packing.h"
 #include "hash_shuffle.h"
 
-int divRoundUp(int dividend, int divisor) {
-  return (dividend + divisor - 1) / divisor;
-}
-
 /** Read kmers for this thread from @inputFileName. */
 unpacked_kmer_t *readLocalKmers(const char *inputFileName, int nKmersReadTypically, int nKmersToRead, int threadIdx) {
+  printf("Reading %d kmers on thread %d\n", nKmersToRead, MYTHREAD);
   const int localCharsToRead = nKmersToRead * LINE_SIZE;
   FILE *inputFile = fopen(inputFileName, "r");
   fseek(inputFile, threadIdx*nKmersReadTypically*LINE_SIZE, SEEK_SET);
@@ -38,7 +35,6 @@ unpacked_kmer_list_t *filterBackwardStartKmers(const unpacked_kmer_t *kmers, int
   for (int i = 0; i < nKmers; i++) {
     const unpacked_kmer_t *kmer = &kmers[i];
     if (isBackwardStartUnpacked(kmer)) {
-      // printf("Adding a start kmer with %19.19s and forward extension %c\n", &(kmer->data), forwardExtensionUnpacked(kmer));
       list = addUnpackedFront(list, kmer);
     }
   }
@@ -54,7 +50,7 @@ int buildContig(unsigned char *dst, const unpacked_kmer_t *start, const shared_h
   memcpy(dst, kmerValue(start), KMER_LENGTH * sizeof(unsigned char));
   int posInContig = KMER_LENGTH;
   char forwardExt = forwardExtensionUnpacked(start);
-  printf("Starting a contig with %19.19s and forward extension %c\n", dst, forwardExt);
+  // printf("Starting a contig with %19.19s and forward extension %c\n", dst, forwardExt);
   packed_kmer_t packedStorage;
   unpacked_kmer_t unpackedStorage;
   unpackedStorage.data[RAW_KMER_BACKWARD_EXT_POS] = 'A'; //HACK: Never used.
@@ -97,7 +93,7 @@ int main(int argc, char *argv[]) {
   
   /* The last thread might get fewer kmers. */
   const int nKmersReadLocally = isLastThread ?
-    nKmersReadTypically - (nKmers % nThreads) :
+    nKmers - nKmersReadTypically*(nThreads-1) :
     nKmersReadTypically;
 
   /* Read the kmers from the input file into a local buffer. */
@@ -124,11 +120,14 @@ int main(int argc, char *argv[]) {
   
   upc_barrier;
   constrTime += gettime();
+  
+  printf("Finished building the hashtable on thread %d.  Now traversing the graph.\n", threadIdx);
 
   /** Graph traversal **/
   traversalTime -= gettime();
   unsigned char *contig = (unsigned char *) malloc(MAXIMUM_CONTIG_SIZE*sizeof(unsigned char));
   FILE *outputFile = fopen(outputFileName, "w");
+  
   for (unpacked_kmer_list_t *remainingStarts = startList; remainingStarts != NULL; remainingStarts = remainingStarts->next) {
     buildContig(contig, remainingStarts->kmer, table);
     fprintf(outputFile, "%s\n", contig);

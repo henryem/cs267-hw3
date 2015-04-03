@@ -7,11 +7,11 @@ UPCC = upcc
 KMER_LENGTH 		= 19
 KMER_EXT_LENGTH = 2
 KMER_PACKED_LENGTH 	= $(shell echo $$((($(KMER_LENGTH)+3)/4)))
-KMER_PACKED_LENGTH_WITH_EXT 	= $(shell echo $$(($(KMER_LENGTH)+1)))
+KMER_PACKED_LENGTH_WITH_EXT 	= $(shell echo $$(($(KMER_PACKED_LENGTH)+1)))
 
 CFLAGS  = -std=gnu99
 ifdef DEBUG
-	CFLAGS += "-d -g"
+	CFLAGS += "-pg"
 else
 	CFLAGS += "-O3"
 endif
