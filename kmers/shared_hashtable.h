@@ -101,6 +101,7 @@ shared_hash_table_t* buildSharedHashTable(const packed_kmer_t *localKmers, const
    * memory.  This is done so that we can avoid implementing a dynamic array
    * in shared memory. */
   packed_kmer_list_t **temporaryBuckets = malloc(result->sizePerThread*sizeof(packed_kmer_list_t *));
+  memset(temporaryBuckets, 0, result->sizePerThread*sizeof(packed_kmer_list_t *));
   kmer_memory_heap_t *heap = makeMemoryHeap(numLocalKmers);
   for (int i = 0; i < numLocalKmers; i++) {
     addToTemporaryBucket(temporaryBuckets, heap, &localKmers[i], threadIdx, nThreads, tableSize);
@@ -109,6 +110,8 @@ shared_hash_table_t* buildSharedHashTable(const packed_kmer_t *localKmers, const
   printf("Added %d kmers to the hash table on thread %d.\n", numLocalKmers, threadIdx);
   
   buildBroadcastDirectory(temporaryBuckets, result->sizePerThread, threadIdx, nThreads);
+  
+  printf("Finished broadcasting directory on thread %d.\n", threadIdx);
   
   free(temporaryBuckets);
   freeMemoryHeap(heap);
