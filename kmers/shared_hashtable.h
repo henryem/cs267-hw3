@@ -132,10 +132,19 @@ char lookupForwardExtension(const shared_hash_table_t *table, const packed_kmer_
   const packed_kmer_t *bucket = malloc(bucketSize*sizeof(packed_kmer_t));
   upc_memget(bucket, DIRECTORY[ownerThread][localHash], bucketSize*sizeof(packed_kmer_t));
   
+  //FIXME
+  printf("Looking up matches for kmer ");
+  printPacked(kmer);
+  printf(".  hashValue = %lld, ownerThread = %lld, localHash = %lld, bucketSize = %d, bucket affinity = %d\n",
+    hashValue, ownerThread, localHash, bucketSize, upc_threadof(DIRECTORY[ownerThread][localHash]));
   for (int kmerIdx = 0; kmerIdx < bucketSize; kmerIdx++) {
     if (equalsOnKmer(&bucket[kmerIdx], kmer)) {
       return forwardExtensionPacked(&bucket[kmerIdx]);
     }
+    //FIXME
+    printf("Potential match ");
+    printPacked(&bucket[kmerIdx]);
+    printf(" does not match.\n");
   }
 
   printf("No match found for kmer ");
