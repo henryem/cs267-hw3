@@ -136,6 +136,13 @@ int main(int argc, char *argv[]) {
   upc_barrier;
   traversalTime += gettime();
 
+  free(table);
+  free(localKmers);
+  freeUnpackedKmerList(startList);
+  free(localRawKmersBuffer);
+  
+  //FIXME: Should technically free the hash table...
+
   /** Print timing and output info **/
   /***** DO NOT CHANGE THIS PART ****/
   if(MYTHREAD==0){
