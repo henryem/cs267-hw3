@@ -10,7 +10,6 @@
 #include "kmer_packing.h"
 
 typedef shared [] packed_kmer_t *shared_bucket_t;
-typedef shared [] shared_bucket_t *local_buckets_t;
 typedef shared [] int *local_bucket_sizes_t;
 
 typedef struct shared_hash_table_t {
@@ -31,49 +30,27 @@ void addToTemporaryBucket(packed_kmer_list_t **temporaryBuckets, kmer_memory_hea
   temporaryBuckets[localHash] = addFrontWithHeap(temporaryBuckets[localHash], kmer, heap);
 }
 
-shared [1] local_buckets_t *DIRECTORY;
+/** DIRECTORY[threadIdx+nThreads*i] is a shared pointer to local memory on
+  * thread threadIdx for kmers with localHashValue == i.  That block of memory
+  * is of size BUCKET_SIZES[threadIdx][i].
+  */
+shared [1] shared_bucket_t *DIRECTORY;
 shared [1] local_bucket_sizes_t *BUCKET_SIZES;
 
-/** Note: The below description is currently false.  The directory returned
-  * is itself shared; each thread does not get its own private copy.  This
-  * may be very inefficient, adding an extra communication step to every
-  * table lookup unless the compiler (or runtime?) is smart about caching.
-  * But apparently different threads may have different memory representations
-  * of the same shared pointer, so that copying a shared pointer to another
-  * thread via memcpy does not work.  There must be some way to translate the
-  * pointer correctly, but I cannot find it and it is probably UPC compiler
-  * dependent. :-(
-  * 
-  * Builds, on each thread, a private array of @nThreads pointers-to-shared.
-  * The ith pointer in the returned array points to the start of the local
-  * bucket-list on thread i.  The (shared, with local affinity) bucket-list for
-  * this thread is passed as an argument.
-  * 
-  * The caller is responsible for freeing both the returned list and the
-  * bucket-lists on each thread.
-  * 
-  * The reason for this bizarre, inefficient directory strategy is that
-  * we do not want to fix the number of threads or kmers at compile time, and
-  * UPC does not support dynamic block strategies.
-  * upc_all_alloc(blockSize, nThreads) might
-  * do the right thing, but its value must be cast to some kind of static
-  * shared type.  shared [] foo * tells the compiler that everything lives
-  * on one thread, while shared [1] foo * tells the compiler that the layout
-  * is 1-cyclic.  We cannot say shared [LOCAL_LIST_SIZE] because we do not know
-  * the local list size (i.e. nKmers / nThreads) at compile time.
-  */
 void buildBroadcastDirectory(const packed_kmer_list_t **localBucketLists, const int numLocalKmers, const int sizePerThread, const int threadIdx, const int nThreads) {
-  DIRECTORY = upc_all_alloc(nThreads, sizeof(local_buckets_t));
+  const int numBuckets = sizePerThread*nThreads;
+  DIRECTORY = upc_all_alloc(numBuckets, sizeof(shared_bucket_t));
   BUCKET_SIZES = upc_all_alloc(nThreads, sizeof(local_bucket_sizes_t));
   
-  local_buckets_t localBuckets = upc_alloc(sizePerThread*sizeof(shared_bucket_t *));
-  DIRECTORY[threadIdx] = localBuckets;
-  shared_bucket_t *privateBuckets = (shared_bucket_t *) localBuckets;
   local_bucket_sizes_t localBucketSizes = upc_alloc(sizePerThread*sizeof(int));
   BUCKET_SIZES[threadIdx] = localBucketSizes;
   int *privateBucketSizes = (int *) localBucketSizes;
   
-  // Flatten each list into (our private pointer to) shared space.
+  // Flatten each list into (our private pointer to) shared space.  We use
+  // a contiguous block of shared memory for all the kmers on this thread,
+  // to avoid the overhead of many calls to upc_alloc().  (In fact, calling
+  // upc_alloc() once per bucket seems to cause a segfault in the version of
+  // BUPC on Hopper, though not on my laptop.)
   shared_bucket_t localBucketStorage = upc_alloc(numLocalKmers*sizeof(packed_kmer_t));
   packed_kmer_t *privateBucketStorage = (packed_kmer_t *) localBucketStorage;
   int numKmersEncountered = 0;
@@ -81,11 +58,13 @@ void buildBroadcastDirectory(const packed_kmer_list_t **localBucketLists, const 
     packed_kmer_list_t *linkedList = localBucketLists[localBucketIdx];
     int bucketSize = packedListSize(linkedList);
     privateBucketSizes[localBucketIdx] = bucketSize;
-    shared_bucket_t localBucket = localBucketStorage + numKmersEncountered;
-    privateBuckets[localBucketIdx] = localBucket;
+    // The following write should be local.  We are putting a shared pointer
+    // (which points to local data) into a shared array.
+    DIRECTORY[threadIdx+nThreads*localBucketIdx] = localBucketStorage + numKmersEncountered;
     packed_kmer_t *privateBucket = privateBucketStorage + numKmersEncountered;
     toFlatCopy(privateBucket, linkedList, bucketSize);
     numKmersEncountered += bucketSize;
+    
   }
 
   //FIXME: May not need a upc_barrier here.
@@ -136,8 +115,7 @@ char lookupForwardExtension(const shared_hash_table_t *table, const packed_kmer_
   
   const int bucketSize = BUCKET_SIZES[ownerThread][localHash];
   const packed_kmer_t *bucket = malloc(bucketSize*sizeof(packed_kmer_t));
-  local_buckets_t *ownerBuckets = DIRECTORY[ownerThread];
-  upc_memget(bucket, DIRECTORY[ownerThread][localHash], bucketSize*sizeof(packed_kmer_t));
+  upc_memget(bucket, DIRECTORY[ownerThread+table->nThreads*localHash], bucketSize*sizeof(packed_kmer_t));
   
   //FIXME
   printfDebug("Looking up matches for kmer ");
@@ -145,7 +123,7 @@ char lookupForwardExtension(const shared_hash_table_t *table, const packed_kmer_
   printPacked(kmer);
 #endif
   printfDebug(".  hashValue = %lld, ownerThread = %lld, localHash = %lld, bucketSize = %d, bucket affinity = %d\n",
-    hashValue, ownerThread, localHash, bucketSize, upc_threadof(DIRECTORY[ownerThread][localHash]));
+    hashValue, ownerThread, localHash, bucketSize, upc_threadof(DIRECTORY[ownerThread+table->nThreads*localHash]));
   for (int kmerIdx = 0; kmerIdx < bucketSize; kmerIdx++) {
 #ifdef CHECKSUM
     checkPacked(&bucket[kmerIdx]);
