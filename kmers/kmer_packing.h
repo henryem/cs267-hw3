@@ -9,11 +9,25 @@
 #include "contig_generation.h"
 #include "packingDNAseq.h"
 
+#ifdef DEBUG
+#define printfDebug(...) printf(__VA_ARGS__)
+#else
+#define printfDebug(...)
+#endif
+
 // Forward declarations:
 
 typedef struct unpacked_kmer_t {
   unsigned char data[LINE_SIZE];
+#ifdef CHECKSUM
+  unsigned char checksum;
+#endif
 } unpacked_kmer_t;
+
+#ifdef CHECKSUM
+void checkUnpacked(unpacked_kmer_t *kmer);
+unsigned char unpackedChecksum(unsigned char *data);
+#endif
 
 /** A packed kmer.  The structure is as follows:
   *  - The first KMER_PACKED_LENGTH chars are for the middle of the kmer.
@@ -30,6 +44,9 @@ typedef struct unpacked_kmer_t {
   */
 typedef struct packed_kmer_t {
   unsigned char data[KMER_PACKED_LENGTH_WITH_EXT];
+#ifdef CHECKSUM
+  unsigned char checksum;
+#endif
 } packed_kmer_t;
 
 void toPacked(const unpacked_kmer_t *rawKmer, packed_kmer_t *packedKmer);
@@ -37,6 +54,10 @@ int64_t hashPackedKmer(const packed_kmer_t *packedKmer, int64_t hashTableSize);
 unsigned char *packedKmerValue(packed_kmer_t *kmer);
 unsigned char backwardExtensionPacked(const packed_kmer_t *kmer);
 unsigned char forwardExtensionPacked(const packed_kmer_t *kmer);
+#ifdef CHECKSUM
+void checkPacked(packed_kmer_t *kmer);
+unsigned char packedChecksum(unsigned char *data);
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 // begin general utils for kmer packing
@@ -74,7 +95,7 @@ int64_t coarseHash(int64_t hash, int64_t coarseTableSize, int64_t hashTableSize)
 }
 
 //NOTE: Works only for the short (19 kmer) size.
-void printKmer(unsigned char * const kmer, unsigned char backwardExt, unsigned char forwardExt) {
+void printKmer(unsigned char *kmer, unsigned char backwardExt, unsigned char forwardExt) {
   printf("%19.19s\t%c%c", kmer, backwardExt, forwardExt);
 }
 
@@ -88,6 +109,7 @@ void printKmer(unsigned char * const kmer, unsigned char backwardExt, unsigned c
 
 const int RAW_KMER_BACKWARD_EXT_POS = KMER_LENGTH+1;
 const int RAW_KMER_FORWARD_EXT_POS = KMER_LENGTH+2;
+const int RAW_KMER_TAB_EXT_POS = KMER_LENGTH;
 
 const char START_CHAR = 'F';
 
@@ -111,10 +133,33 @@ bool isForwardStartUnpacked(const unpacked_kmer_t *kmer) {
   return forwardExtensionUnpacked(kmer) == START_CHAR;
 }
 
+#ifdef CHECKSUM
+void checkUnpacked(unpacked_kmer_t *kmer) {
+  if (unpackedChecksum(kmerValue(kmer)) != kmer->checksum) {
+    printf("Checksum failed on unpacked kmer ");
+    printUnpacked(kmer);
+    printf(" with address %d.\n", kmer);
+    assert(0);
+  }
+}
+
+unsigned char unpackedChecksum(unsigned char *data) {
+  unsigned char checksum = 1;
+  for (int i = 0; i < LINE_SIZE; i++) {
+    checksum += data[i];
+  }
+  return checksum;
+}
+#endif
+
 void unpack(unpacked_kmer_t *dst, const packed_kmer_t *packed) {
   unpackSequence(packedKmerValue(packed), kmerValue(dst), KMER_LENGTH);
+  dst->data[RAW_KMER_TAB_EXT_POS] = '\t';
   dst->data[RAW_KMER_BACKWARD_EXT_POS] = backwardExtensionPacked(packed);
   dst->data[RAW_KMER_FORWARD_EXT_POS] = forwardExtensionPacked(packed);
+#ifdef CHECKSUM
+  dst->checksum = unpackedChecksum(dst->data);
+#endif
 }
 
 int64_t hashUnpackedKmer(const unpacked_kmer_t *unpackedKmer, int64_t hashTableSize) {
@@ -171,6 +216,25 @@ unsigned char forwardExtensionPacked(const packed_kmer_t *kmer) {
   return convertPackedCodeToMer(code);
 }
 
+#ifdef CHECKSUM
+void checkPacked(packed_kmer_t *kmer) {
+  if (packedChecksum(packedKmerValue(kmer)) != kmer->checksum) {
+    printf("Checksum failed on packed kmer ");
+    printPacked(kmer);
+    printf(" with address %d.\n", kmer);
+    assert(0);
+  }
+}
+
+unsigned char packedChecksum(unsigned char *data) {
+  unsigned char checksum = 1;
+  for (int i = 0; i < KMER_PACKED_LENGTH_WITH_EXT; i++) {
+    checksum += data[i];
+  }
+  return checksum;
+}
+#endif
+
 void toPacked(const unpacked_kmer_t *rawKmer, packed_kmer_t *packedKmer) {
 	// See formatting above.
   unsigned char *rawData = kmerValue(rawKmer);
@@ -191,6 +255,9 @@ void toPacked(const unpacked_kmer_t *rawKmer, packed_kmer_t *packedKmer) {
 	packedData[KMER_PACKED_EXT_POS] |= (
 		(forExt == START_CHAR ? 1 : 0)
 		<< 2);
+#ifdef CHECKSUM
+  packedKmer->checksum = packedChecksum(packedData);
+#endif
 }
 
 int64_t hashPackedKmer(const packed_kmer_t *packedKmer, int64_t hashTableSize) {

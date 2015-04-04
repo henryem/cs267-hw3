@@ -108,6 +108,9 @@ shared_hash_table_t* buildSharedHashTable(const packed_kmer_t *localKmers, const
   memset(temporaryBuckets, 0, result->sizePerThread*sizeof(packed_kmer_list_t *));
   kmer_memory_heap_t *heap = makeMemoryHeap(numLocalKmers);
   for (int i = 0; i < numLocalKmers; i++) {
+#ifdef CHECKSUM
+    checkPacked(&localKmers[i]);
+#endif
     addToTemporaryBucket(temporaryBuckets, heap, &localKmers[i], threadIdx, nThreads, tableSize);
   }
   
@@ -124,27 +127,38 @@ shared_hash_table_t* buildSharedHashTable(const packed_kmer_t *localKmers, const
 }
 
 char lookupForwardExtension(const shared_hash_table_t *table, const packed_kmer_t *kmer) {
+#ifdef CHECKSUM
+  checkPacked(kmer);
+#endif
   int64_t hashValue = hashPackedKmer(kmer, table->size);
   int64_t ownerThread = coarseHash(hashValue, table->nThreads, table->size);
   int64_t localHash = localHashValue(hashValue, ownerThread, table->nThreads, table->size);
   
   const int bucketSize = BUCKET_SIZES[ownerThread][localHash];
   const packed_kmer_t *bucket = malloc(bucketSize*sizeof(packed_kmer_t));
+  local_buckets_t *ownerBuckets = DIRECTORY[ownerThread];
   upc_memget(bucket, DIRECTORY[ownerThread][localHash], bucketSize*sizeof(packed_kmer_t));
   
   //FIXME
-  printf("Looking up matches for kmer ");
+  printfDebug("Looking up matches for kmer ");
+#ifdef DEBUG
   printPacked(kmer);
-  printf(".  hashValue = %lld, ownerThread = %lld, localHash = %lld, bucketSize = %d, bucket affinity = %d\n",
+#endif
+  printfDebug(".  hashValue = %lld, ownerThread = %lld, localHash = %lld, bucketSize = %d, bucket affinity = %d\n",
     hashValue, ownerThread, localHash, bucketSize, upc_threadof(DIRECTORY[ownerThread][localHash]));
   for (int kmerIdx = 0; kmerIdx < bucketSize; kmerIdx++) {
+#ifdef CHECKSUM
+    checkPacked(&bucket[kmerIdx]);
+#endif
     if (equalsOnKmer(&bucket[kmerIdx], kmer)) {
       return forwardExtensionPacked(&bucket[kmerIdx]);
     }
     //FIXME
-    printf("Potential match ");
+    printfDebug("Potential match ");
+#ifdef DEBUG
     printPacked(&bucket[kmerIdx]);
-    printf(" does not match.\n");
+#endif
+    printfDebug(" does not match.\n");
   }
 
   printf("No match found for kmer ");
