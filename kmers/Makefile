@@ -1,10 +1,12 @@
 ## NOTES ##
-# I cannot build BUPC on OSX 10.10.  This Makefile is targeted at Ubuntu 14.04.1.
+# I cannot build BUPC on OSX 10.10.  This Makefile is targeted at an Ubuntu 14.04.1 VM and Hopper.
 
 CC = g++
 UPCC = upcc
 
-KMER_LENGTH 		= 19
+ifndef KMER_LENGTH
+  KMER_LENGTH 		= 19
+endif
 KMER_EXT_LENGTH = 2
 KMER_PACKED_LENGTH 	= $(shell echo $$((($(KMER_LENGTH)+3)/4)))
 KMER_PACKED_LENGTH_WITH_EXT 	= $(shell echo $$(($(KMER_PACKED_LENGTH)+1)))
