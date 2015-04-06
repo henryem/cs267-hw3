@@ -9,12 +9,12 @@
 INPUT=test
 
 cd $PBS_O_WORKDIR
-for P in `seq 1 6` do;
-	upcrun -n $P -shared-heap=3G ./pgen ${INPUT}
+for P in `seq 1 6`; do
+  upcrun -n $P -shared-heap=3G ./pgen ${INPUT};
 done
-for P in `seq 7 12` do;
+for P in `seq 7 12`; do
 	upcrun -n $P -shared-heap=2G ./pgen ${INPUT}
 done
-for P in `seq 13 24` do;
+for P in `seq 13 24`; do
 	upcrun -n $P -shared-heap=1G ./pgen ${INPUT}
 done

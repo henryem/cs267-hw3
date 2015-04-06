@@ -10,5 +10,5 @@ INPUT=test
 
 cd $PBS_O_WORKDIR
 for P in 96 120 144 168 192; do
-	aprun -n $P -shared-heap=1G ./pgen ${INPUT}
+	aprun -n $P -m 1Gh ./pgen ${INPUT}
 done
