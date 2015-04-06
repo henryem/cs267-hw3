@@ -12,7 +12,7 @@
 
 /** Read kmers for this thread from @inputFileName. */
 unpacked_kmer_t *readLocalKmers(const char *inputFileName, int nKmersReadTypically, int nKmersToRead, int threadIdx) {
-  printf("Reading %d kmers on thread %d\n", nKmersToRead, MYTHREAD);
+  printf("Reading %d kmers on thread %d.\n", nKmersToRead, MYTHREAD);
   const int localCharsToRead = nKmersToRead * LINE_SIZE;
   FILE *inputFile = fopen(inputFileName, "r");
   fseek(inputFile, threadIdx*nKmersReadTypically*LINE_SIZE, SEEK_SET);
@@ -21,40 +21,52 @@ unpacked_kmer_t *readLocalKmers(const char *inputFileName, int nKmersReadTypical
   fclose(inputFile);
   unpacked_kmer_t *localReadKmers = (unpacked_kmer_t *) malloc(nKmersToRead*sizeof(unpacked_kmer_t));
   for (int i = 0; i < nKmersToRead; i++) {
-    //TODO: Have to copy out of the buffer into the structs, because the
-    // structs might not be byte-identical to the arrays they contain (the
-    // compiler may add padding to byte-align them).  Perhaps this could be
+    //TODO: Have to copy one by one out of the buffer into the structs, because 
+    // the structs might not be byte-identical to the arrays they contain (the
+    // compiler may add padding to word-align them).  Perhaps this could be
     // optimized if it is a problem.
-    memcpy(&(localReadKmers[i].data), &localReadBuffer[i*LINE_SIZE], LINE_SIZE);
+    fromRawChars(&localReadKmers[i], &localReadBuffer[i*LINE_SIZE]);
+#ifdef CHECKSUM
+    checkUnpacked(&localReadKmers[i]);
+#endif
   }
+  free(localReadBuffer);
+  printf("Finished reading %d kmers on thread %d.\n", nKmersToRead, MYTHREAD);
   return localReadKmers;
 }
 
-unpacked_kmer_list_t *filterBackwardStartKmers(const unpacked_kmer_t *kmers, int nKmers) {
+int filterBackwardStartKmers(packed_kmer_t **dst, const unpacked_kmer_t *kmers, int nKmers) {
   unpacked_kmer_list_t *list = makeUnpackedList();
   for (int i = 0; i < nKmers; i++) {
-    const unpacked_kmer_t *kmer = &kmers[i];
-    if (isBackwardStartUnpacked(kmer)) {
-      list = addUnpackedFront(list, kmer);
+    if (isBackwardStartUnpacked(&kmers[i])) {
+      list = addUnpackedFront(list, &kmers[i]);
+#ifdef CHECKSUM
+      checkUnpacked(list->kmer);
+#endif
     }
   }
-  return list;
+  int numStartKmers = makeFlatPackedCopy(dst, list);
+  freeUnpackedKmerList(list);
+  return numStartKmers;
 }
 
 /* @param dst should already be allocated with at least maxContigSize chars. 
  *   It will be set to the contig starting at @start. 
  * @return the length of the contig.
  */
-int buildContig(unsigned char *dst, const unpacked_kmer_t *start, const shared_hash_table_t *table) {
+int buildContig(unsigned char *dst, const packed_kmer_t *start, const shared_hash_table_t *table) {
   /* Initialize current contig with the seed content */
-  memcpy(dst, kmerValue(start), KMER_LENGTH * sizeof(unsigned char));
+  unpacked_kmer_t startUnpacked;
+  unpack(&startUnpacked, start);
+  memcpy(dst, kmerValue(&startUnpacked), KMER_LENGTH * sizeof(unsigned char));
+  
   int posInContig = KMER_LENGTH;
-  char forwardExt = forwardExtensionUnpacked(start);
-  // printf("Starting a contig with %19.19s and forward extension %c\n", dst, forwardExt);
+  char forwardExt = forwardExtensionPacked(start);
   packed_kmer_t packedStorage;
   unpacked_kmer_t unpackedStorage;
-  unpackedStorage.data[RAW_KMER_BACKWARD_EXT_POS] = 'A'; //HACK: Never used.
-  unpackedStorage.data[RAW_KMER_FORWARD_EXT_POS] = 'A'; //HACK: Never used.
+  //HACK
+  unpackedStorage.data[RAW_KMER_BACKWARD_EXT_POS] = 'A';
+  unpackedStorage.data[RAW_KMER_FORWARD_EXT_POS] = 'A';
 
   /* Keep adding bases while not finding a terminal node. */
   while (forwardExt != 'F') {
@@ -62,8 +74,11 @@ int buildContig(unsigned char *dst, const unpacked_kmer_t *start, const shared_h
     posInContig++;
     /* dst[posInContig-KMER_LENGTH] is the start of the last k-mer in the
     * current contig. */
-    //FIXME: This is slow.
-    memcpy(&(unpackedStorage.data), &dst[posInContig-KMER_LENGTH], KMER_LENGTH*sizeof(char));
+    //FIXME: This is slow.  Should maintain the packed form only.
+    memcpy(&(unpackedStorage.data), &dst[posInContig-KMER_LENGTH], KMER_LENGTH*sizeof(unsigned char));
+#ifdef CHECKSUM
+    unpackedStorage.checksum = unpackedChecksum(&unpackedStorage);
+#endif
     toPacked(&unpackedStorage, &packedStorage);
     forwardExt = lookupForwardExtension(table, &packedStorage);
   }
@@ -97,26 +112,30 @@ int main(int argc, char *argv[]) {
     nKmersReadTypically;
 
   /* Read the kmers from the input file into a local buffer. */
-  const unpacked_kmer_t *localRawKmersBuffer = readLocalKmers(inputFileName, nKmersReadTypically, nKmersReadLocally, threadIdx);
+  const unpacked_kmer_t *localRawKmers = readLocalKmers(inputFileName, nKmersReadTypically, nKmersReadLocally, threadIdx);
   
   inputTime += gettime();
-
 
   /** Graph construction **/
   constrTime -= gettime();
   
   /* Build the local start list. */
-  const unpacked_kmer_list_t *startList = filterBackwardStartKmers(localRawKmersBuffer, nKmersReadLocally);
+  packed_kmer_t *startList;
+  int numStartKmers = filterBackwardStartKmers(&startList, localRawKmers, nKmersReadLocally);
   
   /** Get the kmers to handle on this thread. */
   packed_kmer_t *localKmers;
-  int numLocalKmers = hashShuffleKmers(&localKmers, localRawKmersBuffer, nKmersReadLocally, threadIdx, nThreads, nHashBuckets);
+  int numLocalKmers = hashShuffleKmers(&localKmers, localRawKmers, nKmersReadLocally, threadIdx, nThreads, nHashBuckets);
+  
+  free(localRawKmers);
   
   printf("Read %d/%d kmers on thread %d\n", nKmersReadLocally, nKmers, threadIdx);
   printf("Handling %d/%d kmers on thread %d\n", numLocalKmers, nKmers, threadIdx);
   
   /** Build the distributed hash table. */
   shared_hash_table_t *table = buildSharedHashTable(localKmers, numLocalKmers, threadIdx, nThreads, nHashBuckets);
+  
+  free(localKmers);
   
   upc_barrier;
   constrTime += gettime();
@@ -128,20 +147,18 @@ int main(int argc, char *argv[]) {
   unsigned char *contig = (unsigned char *) malloc(MAXIMUM_CONTIG_SIZE*sizeof(unsigned char));
   FILE *outputFile = fopen(outputFileName, "w");
   
-  for (unpacked_kmer_list_t *remainingStarts = startList; remainingStarts != NULL; remainingStarts = remainingStarts->next) {
-    buildContig(contig, remainingStarts->kmer, table);
+  for (int startKmerIdx = 0; startKmerIdx < numStartKmers; startKmerIdx++) {
+    buildContig(contig, &startList[startKmerIdx], table);
     fprintf(outputFile, "%s\n", contig);
   }
   fclose(outputFile);
+  free(contig);
+  free(startList);
+  free(table);
   upc_barrier;
   traversalTime += gettime();
-
-  free(table);
-  free(localKmers);
-  freeUnpackedKmerList(startList);
-  free(localRawKmersBuffer);
   
-  //FIXME: Should technically free the hash table...
+  //FIXME: Should technically free the stuff in the hash table...
 
   /** Print timing and output info **/
   /***** DO NOT CHANGE THIS PART ****/

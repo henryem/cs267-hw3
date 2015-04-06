@@ -152,6 +152,13 @@ unsigned char unpackedChecksum(unsigned char *data) {
 }
 #endif
 
+void fromRawChars(unpacked_kmer_t *dst, const unsigned char *chars) {
+  memcpy(&(dst->data), chars, LINE_SIZE);
+#ifdef CHECKSUM
+  dst->checksum = unpackedChecksum(dst->data);
+#endif
+}
+
 void unpack(unpacked_kmer_t *dst, const packed_kmer_t *packed) {
   unpackSequence(packedKmerValue(packed), kmerValue(dst), KMER_LENGTH);
   dst->data[RAW_KMER_TAB_EXT_POS] = '\t';
@@ -236,6 +243,9 @@ unsigned char packedChecksum(unsigned char *data) {
 #endif
 
 void toPacked(const unpacked_kmer_t *rawKmer, packed_kmer_t *packedKmer) {
+#ifdef CHECKSUM
+  checkUnpacked(rawKmer);
+#endif
 	// See formatting above.
   unsigned char *rawData = kmerValue(rawKmer);
   unsigned char *packedData = packedKmerValue(packedKmer);
@@ -302,7 +312,8 @@ void toFlatCopy(packed_kmer_t *dst, const packed_kmer_list_t *list, int listSize
   }
 }
 
-/* (*dst) is now a flat array of packed_kmer_t. */
+/* (*dst) is now a flat array of packed_kmer_t.  The packed kmers are copies
+ * of those in @list. */
 int makeFlatCopy(packed_kmer_t **dst, const packed_kmer_list_t *list) {
   const int size = packedListSize(list);
   *dst = (packed_kmer_t *) malloc(size*sizeof(packed_kmer_t));
@@ -375,6 +386,24 @@ unpacked_kmer_list_t *addUnpackedFront(const unpacked_kmer_list_t *list, const u
   newFront->kmer = kmer;
   newFront->next = list;
   return newFront;
+}
+
+/* dst is now a flat array of packed_kmer_t.  It should be preallocated. */
+void toFlatPackedCopy(packed_kmer_t *dst, const unpacked_kmer_list_t *list, int listSize) {
+  unpacked_kmer_list_t *remainingList = list;
+  for (int i = 0; i < listSize; i++) {
+    toPacked(remainingList->kmer, &dst[i]);
+    remainingList = remainingList->next;
+  }
+}
+
+/* (*dst) is now a flat array of packed_kmer_t.  The packed kmers are copies
+ * of those in @list. */
+int makeFlatPackedCopy(packed_kmer_t **dst, const unpacked_kmer_list_t *list) {
+  const int size = unpackedListSize(list);
+  *dst = (packed_kmer_t *) malloc(size*sizeof(packed_kmer_t));
+  toFlatPackedCopy(*dst, list, size);
+  return size;
 }
 
 void freeUnpackedKmerList(unpacked_kmer_list_t *list) {

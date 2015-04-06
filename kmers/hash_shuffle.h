@@ -19,10 +19,6 @@ typedef shared [] packed_kmer_t *kmer_send_buffer_shrpt_t;
   * threadIdx.  Each char is a kmer in packed form.
   * @param localRawKmers consists of @nKmersReadLocally kmers,
   *   each taking up LINE_SIZE chars.
-  * 
-  * @return a memory heap, the sole purpose of which is to be freed when
-  * the lists pointed to by @kmersByDestination are no longer needed.  (Do not
-  * free the lists themselves.)
   */
 kmer_memory_heap_t *groupKmersByDestination(const unpacked_kmer_t *localRawKmers, packed_kmer_t **kmersByDestination, int *numKmersByDestination, const int nKmersReadLocally, const int nThreads, const int globalHashTableSize) {
   packed_kmer_t *packedKmers = (packed_kmer_t *) malloc(nKmersReadLocally*sizeof(packed_kmer_t));
@@ -32,12 +28,6 @@ kmer_memory_heap_t *groupKmersByDestination(const unpacked_kmer_t *localRawKmers
   for (int rawKmerIdx = 0; rawKmerIdx < nKmersReadLocally; rawKmerIdx++) {
     const unpacked_kmer_t *rawKmer = &localRawKmers[rawKmerIdx];
     packed_kmer_t *packedKmer = &packedKmers[rawKmerIdx];
-    
-    //FIXME
-    if (backwardExtensionUnpacked(rawKmer) == 0) {
-      printf("raw kmer %d on thread %d appears to be 0...\n", rawKmerIdx, MYTHREAD);
-    }
-    
     toPacked(rawKmer, packedKmer);
     int64_t hashValue = hashPackedKmer(packedKmer, globalHashTableSize);
     int64_t destinationThread = coarseHash(hashValue, nThreads, globalHashTableSize);
@@ -46,6 +36,10 @@ kmer_memory_heap_t *groupKmersByDestination(const unpacked_kmer_t *localRawKmers
     setFrontWithHeap(&kmersByDestinationLists[destinationThread], packedKmer, heap);
   }
   
+  // Now we have the raw kmers, the packed kmers in a single list, and a linked list
+  // of kmers for each destination thread.  For efficiency, we pack the linked
+  // lists (whose size we now know) into arrays, and free the other stuff.
+  // (The caller is responsible for freeing the raw local kmers, of course.)
   for (int otherThreadIdx = 0; otherThreadIdx < nThreads; otherThreadIdx++) {
     const int size = makeFlatCopy(&kmersByDestination[otherThreadIdx], kmersByDestinationLists[otherThreadIdx]);
     numKmersByDestination[otherThreadIdx] = size;
@@ -53,6 +47,8 @@ kmer_memory_heap_t *groupKmersByDestination(const unpacked_kmer_t *localRawKmers
   }
   
   free(kmersByDestinationLists);
+  freeMemoryHeap(heap);
+  free(packedKmers);
   
   return heap;
 }
@@ -88,7 +84,7 @@ int hashShuffleKmers(packed_kmer_t **dst, const unpacked_kmer_t *localRawKmers, 
    * compresses the raw kmers into packed form. */
   packed_kmer_t **kmersByDestination = malloc(nThreads*sizeof(packed_kmer_t *));
   int *numKmersByDestination = malloc(nThreads*sizeof(int));
-  kmer_memory_heap_t *localKmersHeap = groupKmersByDestination(localRawKmers, kmersByDestination, numKmersByDestination, nKmersReadLocally, nThreads, globalHashTableSize);
+  groupKmersByDestination(localRawKmers, kmersByDestination, numKmersByDestination, nKmersReadLocally, nThreads, globalHashTableSize);
 
   /* Tell everyone how many kmers to expect from us. */
   NUM_KMERS_PER_SOURCE = upc_all_alloc(nThreads*nThreads, sizeof(int));
@@ -104,8 +100,11 @@ int hashShuffleKmers(packed_kmer_t **dst, const unpacked_kmer_t *localRawKmers, 
     // that it indeed has local affinity.
     packed_kmer_t *sendBufferPrivatePtr = (packed_kmer_t *) sendBuffer;
     memcpy(sendBufferPrivatePtr, kmersByDestination[otherThreadIdx], numKmersByDestination[otherThreadIdx]*sizeof(packed_kmer_t));
+    free(kmersByDestination[otherThreadIdx]);
     SEND_BUFFERS[otherThreadIdx*nThreads + threadIdx] = sendBuffer;
   }
+  free(kmersByDestination);
+  free(numKmersByDestination);
   
   printf("Waiting for other threads to finish sending on thread %d.\n", threadIdx);
   
@@ -144,11 +143,10 @@ int hashShuffleKmers(packed_kmer_t **dst, const unpacked_kmer_t *localRawKmers, 
   
   printf("Finished receiving %d hash-matched kmers on thread %d.\n", totalKmersReceived, threadIdx);
   
-  freeMemoryHeap(localKmersHeap);
-  free(kmersByDestination);
-  free(numKmersByDestination);
   free(numKmersBySource);
   free(numKmersBeforeSource);
+  upc_all_free(SEND_BUFFERS);
+  upc_all_free(NUM_KMERS_PER_SOURCE);
   
   return totalKmersReceived;
 }
