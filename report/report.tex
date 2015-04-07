@@ -87,6 +87,14 @@
   author={Shet, Aniruddha and Tipparaju, Vinod and Harrison, Robert},
   organization={Citeseer}
 }
+@inproceedings{wang2011exploiting,
+  title={Exploiting Hierarchical Parallelism Using UPC},
+  author={Wang, Lingyuan and Merchant, Saumil and El-Ghazawi, Tarek},
+  booktitle={Parallel and Distributed Processing Workshops and Phd Forum (IPDPSW), 2011 IEEE International Symposium on},
+  pages={1216--1224},
+  year={2011},
+  organization={IEEE}
+}
 \end{filecontents}
 
 \begin{document}
@@ -108,7 +116,7 @@ We partition the hash space evenly among processors, with processor $i$ receivin
 
 After each kmer has been shuffled to the appropriate machine, graph creation is embarrassingly parallel.  We create a shared array for the hash table, which is a \texttt{shared [1] shared\_kmer\_bucket\_t *} of size equal to the hash table size, where \texttt{shared\_kmer\_bucket\_t} is a \texttt{shared [] kmer\_t *}.  A kmer with destination processor $j$ and local hash value $h$ will reside in bucket $hP+j$ in this shared array.  Buckets are implemented as flat arrays; there is an additional shared array, a \texttt{shared [1] int *} of size equal to the hash table size, called a bucket-size table, to store the size of each bucket.  We first insert all the local kmers into temporary buckets that are private dynamic arrays, then allocate each bucket in shared memory with an appropriate size (with local affinity) and store its pointer in the shared hash table and its size in the shared bucket-size table.
 
-In this scheme, a lookup in the hash table involves a lookup in the bucket-size table, a lookup in the hash table for a pointer to the bucket, and a \texttt{upc_memget} to fetch the bucket, which is of expected size $1$ (and maximum size $O(\log n / \log \log n)$ with high probability).  In our implementation, each of these steps is done serially, so there are $3$ rounds of communication for every lookup.
+In this scheme, a lookup in the hash table involves a lookup in the bucket-size table, a lookup in the hash table for a pointer to the bucket, and a \texttt{upc\_memget} to fetch the bucket, which is of expected size $1$ (and maximum size $O(\log n / \log \log n)$ with high probability).  In our implementation, each of these steps is done serially, so there are $3$ rounds of communication for every lookup.
 
 A few final notes on graph creation:
 \begin{enumerate}
@@ -148,7 +156,7 @@ A few final notes on graph creation:
 % \end{algorithmic}
 
 \subsection{Graph Traversal}
-Graph traversal is straightforward.  Each machine filters its own kmers to find those with an \'F\' backward extension.  Then, for each machine (in parallel), for each kmer in the start list, we traverse the graph until we reach a kmer with an \'F\' forward extension.  Since we are guaranteed that we start at the end of a connected component that is a chain, traversing the graph is simply traversing a linked list.  Given that the last $K$ nucleotides of the current contig (including the last forward extension) are string $x$, we look up $x$ in the hash table.  The forward extension of that string gives us one nucleotide to extend the contig, or tells us we are done with the contig.  Each step involves (as noted above) 3 rounds of communication, except in the rare case that $x$ happens to reside on the same processor as the start kmer.
+Graph traversal is straightforward.  Each machine filters its own kmers to find those with an \'F\' backward extension.  Then, for each machine (in parallel), for each kmer in the start list, we traverse the graph until we reach a kmer with an \'F\' forward extension.  Since we are guaranteed that we start at the end of a connected component that is a chain, traversing the graph is simply traversing a linked list.  Given that the last $K$ nucleotides of the current contig (including the last forward extension) are string $x$, we look up $x$ in the hash table.  The forward extension of that string gives us one nucleotide to extend the contig, or tells us we are done with the contig.  Each step involves (as noted above) 3 rounds of communication, except in the rare case that $x$ happens to reside on the same processor as the start kmer.  Each processor blocks while waiting for the next forward extension to be fetched.
 
 \section{Results}
 \subsection{Small experiment}
@@ -178,9 +186,9 @@ Programming with UPC for the first time was a surprisingly poor experience.  Our
   \item[Misleading return type of \texttt{upc\_alloc}:] \texttt{upc\_alloc} returns a \texttt{shared void *}, but it is never correct to use it without casting it to a \texttt{shared [] void *}, since it has local affinity.  The UPC documentation never mentions this.
   \item[Poor standards support:] BUPC does not even support the C99 standard.  In particular, we would have liked to have support for dynamic-sized arrays on the stack.
   \item[Cryptic error messages:] Misuse of a shared pointer (see below) would result in a floating point exception in PGAS.  It would have been helpful to get a message like: ``This probably resulted from misuse of a shared pointer.''
-  \item[Unclear shared pointer semantics:] We at first attempted to use the following scheme for our shared hash table: Each bucket was a linked list head, a struct holding both a kmer and a pointer to the next kmer (that is, a \emph{private} pointer into a \texttt{shared [] kmer\_t} on the machine owning the bucket).  Dereferencing the pointer on another machine did not work and resulted in a FPE.  In a rush to finish the project in time, we gave up on the linked-list scheme.  In retrospect, the problem was probably that we did not declare the pointer itself as shared within the struct.  However, it was not clear to us from the documentation that a private pointer-to-shared would not function properly if used on another processor.
+  \item[Unclear semantics of private-pointer-to-shared:] We at first attempted to use the following scheme for our shared hash table: Each bucket was a linked list head, a struct holding both a kmer and a pointer to the next kmer (that is, a \emph{private} pointer into a \texttt{shared [] kmer\_t} on the machine owning the bucket).  Dereferencing the pointer on another machine did not work and resulted in a FPE.  In a rush to finish the project in time, we gave up on the linked-list scheme.  In retrospect, the problem was probably that we did not declare the pointer itself as shared within the linked list struct.  However, it was not clear to us from the documentation that a private pointer-to-shared would not function properly if used on another processor.
   \item[No support for asynchronous remote communication:] As noted above, this slowed down our algorithm somewhat.
-  \item[Required use of statics:] Statics make functional style impossible and make code more difficult to reason about.  Forgetting that shared objects must be stored in static fields, we at first attempted to use functional style.  It would have been helpful if the compiler had warned us when we incorrectly returned a pointer-to-shared from a function.
+  \item[Required use of statics:] Statics make functional style impossible and make code more difficult to reason about.  Forgetting that shared objects must be stored in static fields, we at first attempted to use functional style.  It would have been helpful if the compiler had warned us about this; for example, it could have issued a warning when we incorrectly returned a pointer-to-shared from a function.
 \end{description}
 
 Some of these issues will be less painful if we use UPC a second time.  Many of our problems stemmed from thinking of UPC as providing a shared memory abstraction.  Given the large number of gotchas in dealing with shared memory, we think the value of UPC is in abstracting away the details of communication, rather than providing a real shared memory abstraction -- UPC is a slightly higher-level MPI.
@@ -188,12 +196,27 @@ Some of these issues will be less painful if we use UPC a second time.  Many of 
 \subsection{Implementation on Alternative Frameworks}
 The hash-based shuffle described above would be easy to implement in MPI; it would probably look more natural. %FIXME
 
-\subsection{Alternative Algorithms and Extensions}
-Our implementation of graph creation seems close to optimal, given the requirement that the graph be partitioned among all available processors.  However, it is not clear that partitioning the graph is the best way to do graph traversal for contig generation.  If each processor (or at least each machine) has a local copy of the graph, and the number of contigs is large, the problem is embarrassingly parallel; the shared memory is only read during the traversal, never modified.  The only reason to introduce network communication into the algorithm is that the graph cannot fit into local memory that supports random accesses faster than network communication.  Using SSDs to store the graph on every machine (for example, Amazon EC2's \texttt{i2.8xlarge} instances) could be a superior alternative, and it would be unnecessary to use UPC.  If the data were initially distributed across machines, it would be important to use an efficient broadcast algorithm to send every kmer to every machine.
+\subsection{Alternative Algorithms}
+Our implementation of graph creation seems close to optimal, given the requirement that the graph be partitioned among all available processors.  However, it is not clear that we have the right overall approach to contig generation.  The dominant cost of contig generation, under our algorithm, is network latency in the traversal phase, and either eliminating or batching communication could greatly improve this.  We have two proposals for that:
 
-%FIXME: Talk about how the algorithm is like the distributed BFS algorithm.  If contigs were very long we'd have to use the traversal-stitching approach mentioned in lecture.
+\begin{enumerate}
+  \item If each processor (or at least each machine) has a local copy of the graph, and the number of contigs is large, the problem is embarrassingly parallel; the shared memory is only read during the traversal, never modified.  The only reason to introduce network communication into the algorithm is that the graph cannot fit into local memory that supports random accesses faster than network communication.  Random access latency for HDDs is typically higher than network latency on a supercomputer.  But using SSDs to store the entire graph on every machine (for example, Amazon EC2's \texttt{i2.8xlarge} instances) could be a superior alternative.  If the data were initially distributed across machines, it would be important to use an efficient broadcast algorithm to initially send every kmer to every machine.
+  \item Under the algorithm we have implemented, during graph traversal, each processor iterates through its list of start kmers serially, and blocks while waiting for the next extension in the current contig to be fetched.  Therefore the total depth of network round-trips paid on a processor is $O(\sum_i S_i)$, where $S_i$ is the length of the $i$th contig and the sum is taken over the contigs generated on the processor.  Generating a single contig is difficult to parallelize, though speculative execution, i.e. prefetching many possible extensions of the current kmer, could allow us to pipeline single-contig generation (at least until bandwidth or computation became bottlenecks).  But generating all the contigs on a processor in parallel would allow us to pay only $O(\max_i S_i)$ in depth of network round-trips per machine, under the reasonable assumption that computation and bandwidth are unbounded during the graph traversal phase.  Unfortunately, UPC does not (to our knowledge) support hierarchical multithreading within a single UPC process, though there is research work in that direction \cite{wang2011exploiting}.  Support for asynchronous remote communication would also allow us to implement this approach in UPC.
+\end{enumerate}
 
-%\bibliographystyle{plain}
-%\bibliography{\jobname}
+\subsection{Alternative Problems}
+The contig generation problem we have been given is unrealistically easy in many ways.  Let us consider two harder versions of the problem:
+
+\begin{enumerate}
+  \item There are $P$ contigs, and their lengths follow a power-law distribution.
+  \item There is only a single contig.
+\end{enumerate}
+
+It is useful to think of version 2 as an extreme case of version 1, and focus on solving version 2.  The issue with version 2 is that the depth of computation in the graph traversal phase is simply the length of the contig, which is $O(n)$.  (In version 1 of the problem, the expected depth could be made arbitrarily close to $n$.)  Our algorithm might still be better than a serial algorithm if the graph cannot fit in memory, but it will not take advantage of parallel computation.
+
+To handle a long contig, we could use the approach suggested in class: Each processor starts at a random kmer and grows in both directions in arbitrary order.  The challenge is to stitch together the work of different processors without too much overlap.  Here is a simple algorithm: When processor $i$ reads a kmer, it atomically marks it as owned by processor $i$.  (If each kmer resides on only 1 processor, this atomic operation need not involve any network communication.)  When another processor attempts to read a kmer that has already been marked, it stops working in that direction.  Once all processors are done, we find the endpoints of each processor's subcontig and send each subcontig to one machine to be stitched together.
+
+\bibliographystyle{plain}
+\bibliography{\jobname}
 
 \end{document}
