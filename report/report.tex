@@ -152,7 +152,23 @@ Graph traversal is straightforward.  Each machine filters its own kmers to find 
 
 \section{Results}
 \subsection{Small experiment}
+
+\begin{figure}
+  \includegraphics[width=\textwidth]{plots/Result_single_small.png}
+  \caption{Comparison of serial and parallel algorithms on small input (19-mers).}
+  \label{fig:all}
+\end{figure}
+
+When given a small 19-mers input, initially both graph construction and graph traversal functioned poorly on small core size (n<3). As the core size increased, we saw the performance of both algorithms improved continuously - Both construction and traversal execution time decreased, with construction time slightly outperformed traversal time.
 \subsection{Large experiment}
+
+\begin{figure}
+  \includegraphics[width=\textwidth]{plots/Result_multiple_large.png}
+  \caption{Comparison of serial and parallel algorithms on large input (51-mers).}
+  \label{fig:all}
+\end{figure}
+
+For larger 51-mers input, the performance gap between serial de Bruijn algorithm and our parallel version became wider. All core sizes we tested (n=96,120,144,168,192) have at least 10 times faster on graph construction and 5 times faster on graph traversal. However, the performance between different core numbers didn't vary much for large core sizes (n>120), indicated that our algorithms can't scale up to improve performance further.    
 
 \section{Discussion}
 \subsection{Using UPC}
