@@ -1,0 +1,22 @@
+Detected 27000544 kmers in text UFX file: /project/projectdirs/mp309/cs267/largeinput
+Generated 210550 contigs with 37528044 total bases
+Total execution time: 27.770000 seconds (13.470000 graph construction / 14.300000 graph traversal)
+Application 49475658 resources: utime ~27s, stime ~2s, Rss ~2301720, inblocks ~2908675, outblocks ~73759
+
+ + --------------------------------------------------------------------------
+ +        Job name: job-serial
+ +          Job Id: 8997909.hopque01
+ +          System: hopper
+ +     Queued Time: Mon Apr  6 19:54:34 2015
+ +      Start Time: Mon Apr  6 19:57:12 2015
+ + Completion Time: Mon Apr  6 19:57:45 2015
+ +            User: derekkuo
+ +        MOM Host: nid03841
+ +           Queue: debug
+ +  Req. Resources: mppnodect=1,mppnppn=1,mppwidth=1,walltime=00:10:00
+ +  Used Resources: cput=00:00:00,energy_used=0,mem=5772kb,vmem=135184kb,walltime=00:00:35
+ +     Acct String: mp309
+ +   PBS_O_WORKDIR: /global/u2/d/derekkuo/hw3_final/cs267-hw3/kmers
+ +     Submit Args: job-serial
+ + --------------------------------------------------------------------------
+

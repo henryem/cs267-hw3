@@ -5,7 +5,7 @@ CC = g++
 UPCC = upcc
 
 ifndef KMER_LENGTH
-  KMER_LENGTH 		= 19
+  KMER_LENGTH 		= 51
 endif
 KMER_EXT_LENGTH = 2
 KMER_PACKED_LENGTH 	= $(shell echo $$((($(KMER_LENGTH)+3)/4)))
