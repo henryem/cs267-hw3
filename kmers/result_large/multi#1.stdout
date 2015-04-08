@@ -1,0 +1,29 @@
+Number of UPC threads: 96
+Input reading time: 3.659376 seconds
+Graph construction time: 1.197257 seconds
+Graph traversal time: 3.305852 seconds
+Application 49476319 resources: utime ~317s, stime ~222s, Rss ~31788, inblocks ~4364936, outblocks ~121958
+
+Number of UPC threads: 120
+Input reading time: 1.135362 seconds
+Graph construction time: 0.578319 seconds
+Graph traversal time: 2.284802 seconds
+Application 49476326 resources: utime ~271s, stime ~238s, Rss ~25616, inblocks ~4474115, outblocks ~134267
+
+Number of UPC threads: 144
+Input reading time: 0.998788 seconds
+Graph construction time: 1.083979 seconds
+Graph traversal time: 2.164225 seconds
+Application 49476335 resources: utime ~311s, stime ~285s, Rss ~21772, inblocks ~5363243, outblocks ~146684
+
+Number of UPC threads: 168
+Input reading time: 0.945711 seconds
+Graph construction time: 1.487161 seconds
+Graph traversal time: 1.918127 seconds
+Application 49476362 resources: utime ~401s, stime ~345s, Rss ~18768, inblocks ~6262296, outblocks ~159137
+
+Number of UPC threads: 192
+Input reading time: 1.453076 seconds
+Graph construction time: 0.484667 seconds
+Graph traversal time: 2.071220 seconds
+Application 49476368 resources: utime ~388s, stime ~379s, Rss ~16648, inblocks ~5588251, outblocks ~171729
